@@ -897,3 +897,26 @@ object's fields (hence the nomenclature import).
  #   C a m v i e w - a i - d a s h b o a r d 
  
  
+## Deploy to a server
+
+Every push to `main` that passes the tests is published to GHCR and deployed by the `deploy` job over SSH.
+
+**GitHub secrets** (Settings › Secrets and variables › Actions):
+
+| Secret | Value |
+|---|---|
+| `SERVER_IP` | the server's public IP |
+| `SERVER_SSH_KEY` | the full private key (`-----BEGIN … KEY-----` to `-----END … KEY-----`) |
+| `SERVER_USER` | optional, default `ubuntu` (Amazon Linux: `ec2-user`) |
+| `SERVER_PORT` | optional, default `22` |
+
+**AWS security group:** the SSH rule must allow GitHub Actions to connect. GitHub's runners use changing IPs, so set the source of port 22 to `0.0.0.0/0` (login is by key only). A rule limited to your own IP gives `dial tcp …:22: i/o timeout`. Port 5000 (or 80/443 behind a proxy) must be open for users.
+
+**Once on the server:** install Docker, then put the settings in `/opt/camview/.env` (same content as the local `.env`, never committed):
+
+```sh
+sudo mkdir -p /opt/camview && sudo nano /opt/camview/.env
+sudo usermod -aG docker ubuntu     # lets the deploy user run docker without sudo
+```
+
+Data (users, clients, tickets, audit trail) is kept in the Docker volume `camview_data` across deployments.

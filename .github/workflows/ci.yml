@@ -251,6 +251,7 @@ jobs:
     name: Deploy CAMVIEW to production
     runs-on: ubuntu-latest
     timeout-minutes: 15
+<<<<<<< HEAD
 
     needs:
       - publish
@@ -258,17 +259,61 @@ jobs:
     if: >
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main'
+=======
+    needs: [publish]
+>>>>>>> 048ef9f (first commit)
+
+    # never cancel a deployment half-way (the top-level concurrency cancels older runs)
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+
+    permissions:
+      contents: read
+      packages: read            # the job's own token pulls the image from GHCR — no extra secret needed
+
+    env:
+      SERVER_PORT: ${{ secrets.SERVER_PORT || '22' }}
 
     steps:
+<<<<<<< HEAD
 
       # --------------------------------------------------------
       # SSH DEPLOYMENT
       # --------------------------------------------------------
 
       - name: Deploy to EC2
+=======
+      - name: Image to deploy
+        id: img
+        run: |
+          repo="${GITHUB_REPOSITORY,,}"
+          echo "image=ghcr.io/${repo}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Check the server is reachable
+        env:
+          HOST: ${{ secrets.SERVER_IP }}
+        run: |
+          if [ -z "$HOST" ]; then
+            echo "::error::Secret SERVER_IP is not set (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+          if ! timeout 15 bash -c "echo > /dev/tcp/$HOST/$SERVER_PORT"; then
+            echo "::error::GitHub Actions cannot reach the server on port $SERVER_PORT. In AWS: EC2 > Security Groups > Inbound rules > SSH (port $SERVER_PORT) must allow source 0.0.0.0/0 (key-only login), not only your own IP."
+            exit 1
+          fi
+          echo "Server reachable on port $SERVER_PORT"
+
+      - name: Deploy CAMVIEW
+>>>>>>> 048ef9f (first commit)
         uses: appleboy/ssh-action@v1.2.2
+        env:
+          IMAGE: ${{ steps.img.outputs.image }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_PULL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.SERVER_IP }}
+<<<<<<< HEAD
           username: ubuntu
           key: ${{ secrets.SERVER_SSH_KEY }}
 
@@ -278,9 +323,20 @@ jobs:
           timeout: 120s
           command_timeout: 10m
 
+=======
+          username: ${{ secrets.SERVER_USER || 'ubuntu' }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ env.SERVER_PORT }}
+          timeout: 60s
+          command_timeout: 10m
+          envs: IMAGE,GHCR_USER,GHCR_PULL_TOKEN
+>>>>>>> 048ef9f (first commit)
           script: |
             set -e
+            APP_DIR=/opt/camview
+            CONTAINER=camview
 
+<<<<<<< HEAD
             echo ""
             echo "=========================================="
             echo " CAMVIEW PRODUCTION DEPLOYMENT"
@@ -297,10 +353,18 @@ jobs:
             # ------------------------------------------------
             # VARIABLES
             # ------------------------------------------------
+=======
+            echo "== CAMVIEW deployment: $IMAGE"
+>>>>>>> 048ef9f (first commit)
 
-            IMAGE="ghcr.io/adityabh2/camview-ai-dashboard:latest"
-            CONTAINER="camview"
+            # All settings (API key, project, admin, secret key) live in a file ON THE SERVER only,
+            # never in GitHub. Create it once — see README "Deploy to a server".
+            if [ ! -f "$APP_DIR/.env" ]; then
+              echo "ERROR: $APP_DIR/.env is missing on the server. Create it once (copy your local .env) and re-run."
+              exit 1
+            fi
 
+<<<<<<< HEAD
             # ------------------------------------------------
             # CHECK REQUIRED SECRETS
             # ------------------------------------------------
@@ -372,9 +436,30 @@ jobs:
               -e CAMVIEW_MODE=live \
               -e CAMVIEW_SECRET_KEY="${CAMVIEW_SECRET_KEY}" \
               -e CAMVIEW_API_KEY="${CAMVIEW_API_KEY}" \
+=======
+            if docker info >/dev/null 2>&1; then DOCKER=docker; else DOCKER="sudo docker"; fi
+
+            echo "$GHCR_PULL_TOKEN" | $DOCKER login ghcr.io -u "$GHCR_USER" --password-stdin
+            $DOCKER pull "$IMAGE"
+            $DOCKER logout ghcr.io >/dev/null 2>&1 || true
+
+            # keep users, clients, tickets and the audit trail across deployments
+            $DOCKER volume create camview_data >/dev/null
+
+            $DOCKER rm -f "$CONTAINER" >/dev/null 2>&1 || true
+            $DOCKER run -d \
+              --name "$CONTAINER" \
+              --restart unless-stopped \
+              -p 5000:5000 \
+              --env-file "$APP_DIR/.env" \
+>>>>>>> 048ef9f (first commit)
               -e CAMVIEW_DB_PATH=/app/backend/data/camview.db \
+              -e CAMVIEW_DEMO_DB_PATH=/app/backend/data/camview-demo.db \
+              -e PORT=5000 \
+              -v camview_data:/app/backend/data \
               "$IMAGE"
 
+<<<<<<< HEAD
             # ------------------------------------------------
             # WAIT FOR APPLICATION
             # ------------------------------------------------
@@ -396,9 +481,21 @@ jobs:
               fi
 
               echo "Waiting... $i/30"
+=======
+            echo "== Waiting for the application"
+            ok=""
+            for i in $(seq 1 45); do
+              if curl -fsS http://localhost:5000/api/auth/session -o /tmp/camview-session.json; then ok=1; break; fi
+>>>>>>> 048ef9f (first commit)
               sleep 2
             done
+            if [ -z "$ok" ]; then
+              echo "ERROR: the application did not answer"
+              $DOCKER logs --tail 80 "$CONTAINER"
+              exit 1
+            fi
 
+<<<<<<< HEAD
             # ------------------------------------------------
             # FAILURE CHECK
             # ------------------------------------------------
@@ -486,3 +583,15 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CAMVIEW_SECRET_KEY: ${{ secrets.CAMVIEW_SECRET_KEY }}
           CAMVIEW_API_KEY: ${{ secrets.CAMVIEW_API_KEY }}
+=======
+            if ! grep -Eq '"mode": *"live"' /tmp/camview-session.json; then
+              echo "ERROR: running, but not in LIVE mode — set CAMVIEW_MODE=live and CAMVIEW_API_KEY in $APP_DIR/.env"
+              cat /tmp/camview-session.json
+              exit 1
+            fi
+
+            $DOCKER image prune -f >/dev/null 2>&1 || true
+            $DOCKER ps --filter "name=$CONTAINER"
+            $DOCKER logs --tail 30 "$CONTAINER"
+            echo "== CAMVIEW deployed (LIVE)"
+>>>>>>> 048ef9f (first commit)
