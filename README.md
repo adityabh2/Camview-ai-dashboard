@@ -878,4 +878,5 @@ object's fields (hence the nomenclature import).
 | Access denied / not available | Your role or scope doesn't include it — ask an administrator. |
 | Charts missing | The chart library CDN is blocked; all numbers remain in tables. |
 #   C a m v i e w - a i - d a s h b o a r d  
+ #   C a m v i e w - a i - d a s h b o a r d  
  
