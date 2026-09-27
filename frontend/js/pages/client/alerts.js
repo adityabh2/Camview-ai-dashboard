@@ -42,7 +42,7 @@ export default {
           ],
           rows: r.items,
           onRow: (a) => { location.hash = alertHref(a); },
-          emptyHtml: empty('No shared alerts', (q.priority || q.ack || q.exam || q.search) ? 'Nothing matches these filters.' : 'Nothing has been shared with you yet.', 'share'),
+          emptyHtml: empty('No shared alerts', (q.priority || q.ack || q.exam || q.search) ? 'Nothing matches these filters.' : 'No alert has been confirmed for your exams yet. Alerts appear here the moment the operations team marks them VALID.', 'share'),
         });
       } catch (e) {
         if (ctx.isStale()) return;

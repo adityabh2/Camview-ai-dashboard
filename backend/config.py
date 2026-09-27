@@ -92,6 +92,17 @@ def apply():
     CACHE_SECONDS = max(2, int(os.environ.get("CAMVIEW_CACHE_SECONDS", "30") or 30))
     KPI_MAX_PAGES = max(1, int(os.environ.get("CAMVIEW_KPI_MAX_PAGES", "10") or 10))
     KPI_USE_HISTORY = os.environ.get("CAMVIEW_KPI_USE_HISTORY", "0") == "1"
+    global PASSWORD_MIN
+    # Minimum password length for every account (sign-in lockout after repeated failures still applies).
+    PASSWORD_MIN = max(4, int(os.environ.get("CAMVIEW_PASSWORD_MIN", "5") or 5))
+    global AUTO_DISCOVER, AUTO_DISCOVER_MINUTES, AUTO_ACTIVE_HOURS, AUTO_RETIRE_HOURS
+    # Live mode: running Camview projects are found and monitored automatically (nobody types an id).
+    # "Running" = any event (alert or camera status) within AUTO_ACTIVE_HOURS. A project found this way
+    # stops being monitored after AUTO_RETIRE_HOURS without any event (0 = never).
+    AUTO_DISCOVER = os.environ.get("CAMVIEW_AUTO_DISCOVER", "1") != "0"
+    AUTO_DISCOVER_MINUTES = max(5, int(os.environ.get("CAMVIEW_AUTO_DISCOVER_MINUTES", "30") or 30))
+    AUTO_ACTIVE_HOURS = max(1, int(os.environ.get("CAMVIEW_AUTO_ACTIVE_HOURS", "24") or 24))
+    AUTO_RETIRE_HOURS = max(0, int(os.environ.get("CAMVIEW_AUTO_RETIRE_HOURS", "72") or 0))
 
     SECRET_KEY = os.environ.get("CAMVIEW_SECRET_KEY", "").strip()
     if not SECRET_KEY:

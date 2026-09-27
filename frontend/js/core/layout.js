@@ -174,7 +174,7 @@ export function mountShell() {
         <div class="title"><h1 id="page-title">CAMVIEW</h1><div class="crumbs" id="crumbs"></div></div>
         ${session.mode === 'demo' ? '<span class="demo-flag" title="All data is generated demo data — not real alarms">DEMO DATA</span>' : ''}
         <span class="spacer"></span>
-        ${!isClient() && session.projects.length > 1 ? `<select class="select hide-sm" id="project-sel" aria-label="Project">${session.projects.map((p) => `<option value="${esc(p.externalId)}">${esc(p.code)}${p.name && p.name !== p.code ? ' · ' + esc(p.name) : ''}</option>`).join('')}</select>` : ''}
+        <span id="project-slot">${projectSelect()}</span>
         <button class="fresh" id="fresh" type="button" aria-label="Data freshness — click to check for new data now"><span class="dot" id="fresh-dot"></span><span class="txt" id="fresh-txt" role="status" aria-live="polite">Connecting…</span><span class="bolt hidden" id="fresh-push" title="Push updates connected">${icon('zap', 's')}</span></button>
         <div class="netbar" id="netbar" aria-hidden="true"></div>
         ${!isClient() ? `<button class="btn ghost hide-sm" id="search-btn" aria-label="Search (Ctrl+K)">${icon('search')}<span class="kbd">Ctrl K</span></button>` : ''}
@@ -188,11 +188,7 @@ export function mountShell() {
   </div>`;
   loadBranding();                                   // organisation name / logo (repaints #shell-brand when it arrives)
 
-  const sel = $('#project-sel');
-  if (sel) {
-    sel.value = currentProject() || '';
-    sel.addEventListener('change', () => { setProject(sel.value); window.dispatchEvent(new HashChangeEvent('hashchange')); });
-  }
+  wireProjectSelect();
   $('#menu-btn').addEventListener('click', () => $('#shell').classList.toggle('nav-open'));
   $('#nav').addEventListener('click', (e) => {
     const t = e.target.closest('#adv-toggle');
@@ -286,6 +282,34 @@ function paintCodeBanner() {
   box.onkeydown = (e) => { if (e.key === 'Enter' && e.target.matches('[data-code-for]')) box.querySelector(`[data-code-save="${CSS.escape(e.target.dataset.codeFor)}"]`)?.click(); };
 }
 on('session', () => paintCodeBanner());
+
+function projectSelect() {
+  return !isClient() && session.projects.length > 1 ? `<select class="select hide-sm" id="project-sel" aria-label="Project">${session.projects.map((p) => `<option value="${esc(p.externalId)}">${esc(p.code)}${p.name && p.name !== p.code ? ' · ' + esc(p.name) : ''}</option>`).join('')}</select>` : '';
+}
+function wireProjectSelect() {
+  const sel = $('#project-sel');
+  if (!sel) return;
+  sel.value = currentProject() || '';
+  sel.addEventListener('change', () => { setProject(sel.value); window.dispatchEvent(new HashChangeEvent('hashchange')); });
+}
+
+// Projects found running in Camview are monitored by the server on its own: pick them up without a new sign-in.
+let projectsCheckedAt = Date.now();
+on('data', async () => {
+  if (!session.authenticated || isClient() || Date.now() - projectsCheckedAt < 60000) return;
+  projectsCheckedAt = Date.now();
+  try {
+    const s = await api.get('/api/auth/session');
+    const sig = (list) => (list || []).map((p) => `${p.externalId}=${p.code}`).join('|');
+    if (!s.authenticated || sig(s.projects) === sig(session.projects)) return;
+    const added = (s.projects || []).filter((p) => !session.projects.some((q) => q.externalId === p.externalId));
+    session.projects = s.projects || [];
+    const slot = $('#project-slot');
+    if (slot) { slot.innerHTML = projectSelect(); wireProjectSelect(); }
+    paintCodeBanner();
+    if (added.length) toast(`Now monitoring ${added.map((p) => p.code).join(', ')} — found running in Camview`, 'success');
+  } catch { /* next change tries again */ }
+});
 
 function initials(name) { return (name || '?').split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase(); }
 
@@ -401,7 +425,7 @@ function userMenu() {
         <div class="hint">${status.push ? 'Push updates are connected: screens refresh the moment data changes. This interval is only the fallback check.' : 'How often the screen checks for changes when push updates are not available.'} Live data itself is read from Camview every ${Math.round((status.cacheSeconds || 30))} s.</div></div>
       <div class="section-title">Change password</div>
       <div class="field"><label>Current password</label><input class="input" type="password" id="pw-cur" autocomplete="current-password"></div>
-      <div class="field"><label>New password (min. 10 characters)</label><input class="input" type="password" id="pw-new" autocomplete="new-password"></div>
+      <div class="field"><label>New password (min. ${session.passwordMin || 5} characters)</label><input class="input" type="password" id="pw-new" autocomplete="new-password"></div>
       <div class="row"><button class="btn" id="pw-save">Change password</button><span class="grow"></span><button class="btn danger" id="logout">${icon('logout')} Sign out</button></div>
       <div class="section-title">Keyboard</div><div class="muted">Ctrl+K search · ? shortcuts · Esc closes dialogs · Enter opens a focused row</div>`,
   });

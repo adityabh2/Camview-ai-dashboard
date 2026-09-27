@@ -129,7 +129,7 @@ def events():
 def auth_session():
     """Public: tells the login screen what mode we're in. Never includes secrets."""
     user = rbac.current_user()
-    out = {"authenticated": bool(user), "mode": config.MODE, "features": config.FEATURES,
+    out = {"authenticated": bool(user), "mode": config.MODE, "features": config.FEATURES, "passwordMin": config.PASSWORD_MIN,
            "product": {"name": "CAMVIEW", "product": "Command Center",
                        "tagline": "Alarm Intelligence • Live Operations • Investigation • Collaboration"}}
     if config.MODE == "demo":
@@ -159,7 +159,7 @@ def login():
     if not row or not row["password_hash"] or not check_password_hash(row["password_hash"], password):
         _record_fail(ip)
         db.audit("auth.login_failed", None, "user", email or "?", details={"ip": ip})
-        raise ApiError("invalid_credentials", "Email or password is incorrect.", 401)
+        raise ApiError("invalid_credentials", "Sign-in name or password is incorrect.", 401)
     if row["status"] != "active":
         raise ApiError("account_disabled", "This account is disabled.", 403)
     user = rbac.load_user(row["id"])
@@ -167,6 +167,7 @@ def login():
         raise ApiError("account_disabled", "This account has no access (inactive client or empty role).", 403)
     session.clear()
     session["uid"] = row["id"]
+    session["pwv"] = user.get("pwChangedAt")      # a later password change or reset signs this session out
     session.permanent = True
     # keep the previous visit for "Since last visit"
     db.execute("UPDATE users SET prev_login_at=last_login_at, last_login_at=? WHERE id=?", (db.now_iso(), row["id"]))
@@ -192,9 +193,11 @@ def change_password():
     if not check_password_hash(row["password_hash"] or "", str(b.get("current") or "")):
         raise ApiError("invalid_credentials", "Current password is incorrect.", 400)
     new = str(b.get("new") or "")
-    if len(new) < 10:
-        raise ApiError("bad_request", "New password must be at least 10 characters.", 400)
-    db.execute("UPDATE users SET password_hash=? WHERE id=?", (generate_password_hash(new), user["id"]))
+    if len(new) < config.PASSWORD_MIN:
+        raise ApiError("bad_request", f"New password must be at least {config.PASSWORD_MIN} characters.", 400)
+    now = db.now_iso()
+    db.execute("UPDATE users SET password_hash=?, pw_changed_at=? WHERE id=?", (generate_password_hash(new), now, user["id"]))
+    session["pwv"] = now                          # this browser stays signed in; every other session is signed out
     db.audit("user.password_change", user, "user", user["id"])
     return jsonify({"ok": True})
 

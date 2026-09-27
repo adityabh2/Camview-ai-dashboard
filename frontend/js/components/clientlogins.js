@@ -4,9 +4,11 @@
 // Passwords are shown once (typed or generated); the server stores only a hash.
 
 import * as api from '../core/api.js';
+import { session } from '../core/state.js';
 import { esc, icon, fmt, dialog, toast, confirmDialog, $, $$ } from '../core/ui.js';
 
 const WORDS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+const MIN = () => session.passwordMin || 5;
 export function generatePassword(n = 14) {
   const a = new Uint32Array(n);
   crypto.getRandomValues(a);
@@ -14,7 +16,7 @@ export function generatePassword(n = 14) {
 }
 
 const pwField = (id, label, hint) => `<div class="field"><label for="${id}">${label}</label>
-  <div class="pw-row"><input class="input mono" id="${id}" type="password" autocomplete="new-password" minlength="10" placeholder="at least 10 characters">
+  <div class="pw-row"><input class="input mono" id="${id}" type="password" autocomplete="new-password" minlength="${MIN()}" placeholder="at least ${MIN()} characters">
   <button type="button" class="btn sm ghost" data-pw-show="${id}" aria-label="Show password">${icon('eye', 's')}</button>
   <button type="button" class="btn sm" data-pw-gen="${id}">${icon('refresh', 's')} Generate</button></div>
   <div class="hint">${hint}</div></div>`;
@@ -73,7 +75,7 @@ export function loginDialog({ client, exams = [], roles = [], user = null, prese
         if (exams.length && !picked.length) { toast('Tick at least one exam', 'warning'); return; }
         const all = !exams.length || picked.length === exams.length;
         const pw = $('#cl-lpw', box).value;
-        if (pw && pw.length < 10) { toast('The password needs at least 10 characters', 'warning'); return; }
+        if (pw && pw.length < MIN()) { toast(`The password needs at least ${MIN()} characters`, 'warning'); return; }
         const body = { name: $('#cl-lname', box).value.trim(), email: $('#cl-lemail', box).value.trim(), roleId: $('#cl-lrole', box).value,
           clientId: client.id, scopes: all ? [] : picked.map((v) => ({ type: 'exam', value: v })) };
         if (!body.name || !body.email) { toast('Name and sign-in name are required', 'warning'); return; }
@@ -97,13 +99,13 @@ export function loginDialog({ client, exams = [], roles = [], user = null, prese
 export function resetPassword(user, clientName, onDone) {
   const d = dialog({
     title: `${icon('key')} Reset password · ${esc(user.email)}`,
-    body: `<p class="muted" style="margin-top:0">The old password stops working at once.</p>${pwField('cl-rpw', 'New password', 'Type one or press Generate.')}`,
+    body: `<p class="muted" style="margin-top:0">The old password stops working at once and the login is signed out of every browser.</p>${pwField('cl-rpw', 'New password', 'Type one or press Generate.')}`,
     actions: [
       { label: 'Cancel', onClick: ({ close }) => close() },
       { label: 'Set password', kind: 'primary', onClick: async ({ close, el: box }) => {
         let pw = $('#cl-rpw', box).value;
         if (!pw) pw = generatePassword();
-        if (pw.length < 10) { toast('The password needs at least 10 characters', 'warning'); return; }
+        if (pw.length < MIN()) { toast(`The password needs at least ${MIN()} characters`, 'warning'); return; }
         try {
           await api.put(`/api/users/${encodeURIComponent(user.id)}`, { password: pw });
           close();
@@ -114,6 +116,17 @@ export function resetPassword(user, clientName, onDone) {
     ],
   });
   wirePw(d.el);
+}
+
+/** Delete a login for good (the audit trail keeps its name). */
+export async function deleteLogin(user, onDone) {
+  if (!await confirmDialog({ title: `Delete ${esc(user.email)}?`, danger: true, confirmLabel: 'Delete login',
+    message: `<p>The login <b class="mono">${esc(user.email)}</b> is removed and signed out at once. This cannot be undone; you can create a new login later.</p>`, requireText: user.email })) return;
+  try {
+    await api.del(`/api/users/${encodeURIComponent(user.id)}`);
+    toast('Login deleted', 'success');
+    onDone?.();
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 /** Enable / disable a login. */
@@ -136,7 +149,8 @@ export function loginListHtml(users, { canManage, examsById = {} } = {}) {
         <div class="t2">${esc(u.name)} · ${esc(u.role || '')} · ${u.exams?.length ? esc(u.exams.map((x) => examsById[x] || x).join(', ')) : 'every exam'} · ${u.lastLoginAt ? `signed in ${fmt.rel(u.lastLoginAt)}` : 'never signed in'}</div></div>
       ${canManage ? `<div class="row tight"><button class="btn sm ghost" data-cl-edit="${esc(u.id)}" title="Edit">${icon('edit', 's')}</button>
         <button class="btn sm ghost" data-cl-reset="${esc(u.id)}" title="Reset password">${icon('key', 's')}</button>
-        <button class="btn sm ghost" data-cl-toggle="${esc(u.id)}" title="${u.status === 'active' ? 'Disable' : 'Enable'}">${icon(u.status === 'active' ? 'lock' : 'check', 's')}</button></div>` : ''}
+        <button class="btn sm ghost" data-cl-toggle="${esc(u.id)}" title="${u.status === 'active' ? 'Disable' : 'Enable'}">${icon(u.status === 'active' ? 'lock' : 'check', 's')}</button>
+        <button class="btn sm ghost cl-del" data-cl-delete="${esc(u.id)}" title="Delete login">${icon('trash', 's')}</button></div>` : ''}
     </div>`).join('')}</div>`;
 }
 
@@ -145,4 +159,5 @@ export function wireLoginList(root, { users, client, exams, roles, onDone }) {
   $$('[data-cl-edit]', root).forEach((b) => b.addEventListener('click', () => loginDialog({ client, exams, roles, user: find(b.dataset.clEdit), onDone })));
   $$('[data-cl-reset]', root).forEach((b) => b.addEventListener('click', () => resetPassword(find(b.dataset.clReset), client.name, onDone)));
   $$('[data-cl-toggle]', root).forEach((b) => b.addEventListener('click', () => toggleLogin(find(b.dataset.clToggle), onDone)));
+  $$('[data-cl-delete]', root).forEach((b) => b.addEventListener('click', () => deleteLogin(find(b.dataset.clDelete), onDone)));
 }

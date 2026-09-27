@@ -35,7 +35,7 @@ export default {
             : `<div class="card" style="margin-bottom:16px">${empty('No exams yet', 'Your exams appear here once the operations team maps them to your organisation.', 'calendar')}</div>`}
           <div class="grid g-main">
             ${card({ title: `${icon('share')} Recent alerts`, actions: '<a class="btn sm" href="#/client/alerts">All alerts</a>',
-              body: d.recent.length ? `<div class="pcards cl-cards">${d.recent.map(alertCard).join('')}</div>` : empty('No alerts yet', 'Alerts appear here as soon as they are validated for your organisation.', 'share') })}
+              body: d.recent.length ? `<div class="pcards cl-cards">${d.recent.map(alertCard).join('')}</div>` : empty('No alerts yet', 'Alerts appear here the moment the operations team confirms them as VALID for your exams. Nothing to do on your side.', 'share') })}
             <div class="stack">
               ${card({ title: 'Priority of shared alerts', body: bars(d.priorityDistribution.map((x) => ({ ...x, color: PRIORITY_COLORS[x.key], sw: PRIORITY_COLORS[x.key] }))) })}
               ${card({ title: `${icon('report')} Reports`, actions: can('client.report.view') ? '<a class="btn sm" href="#/client/reports">All reports</a>' : '', flush: true,

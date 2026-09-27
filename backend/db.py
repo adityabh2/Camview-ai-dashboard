@@ -326,7 +326,7 @@ CREATE TABLE IF NOT EXISTS camera_health (
 
 _COLUMN_MIGRATIONS = {
     "notifications": {"severity": "TEXT", "snoozed_until": "TEXT"},
-    "users": {"prev_login_at": "TEXT"},
+    "users": {"prev_login_at": "TEXT", "pw_changed_at": "TEXT"},
     "alert_rules": {"status": "TEXT", "version": "INTEGER", "updated_at": "TEXT", "updated_by": "TEXT"},
     "camera_health": {"raw_status": "TEXT"},
 }

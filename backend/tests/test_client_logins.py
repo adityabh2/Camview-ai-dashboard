@@ -115,4 +115,4 @@ def test_manage_client_login_password_status_and_exams(app, admin):
     assert admin.put(f"/api/users/{u['id']}", {"status": "disabled"})[0] == 200
     assert Client(app).c.post("/api/auth/login", json={"email": "desk.one", "password": "brand-new-pass-1"}).status_code != 200
     # too-short password refused
-    assert admin.put(f"/api/users/{u['id']}", {"password": "short"})[0] == 400
+    assert admin.put(f"/api/users/{u['id']}", {"password": "abcd"})[0] == 400      # below the 5-character minimum

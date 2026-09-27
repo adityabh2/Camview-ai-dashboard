@@ -62,6 +62,10 @@ def run():
     datasource.prune_stale_projects()          # an old exam's auto-built tree never lingers next to the running one
     import tickets
     tickets.enforce_operator_valid_only()      # clients see only alerts the backend team marked VALID
+    try:
+        tickets.deliver_pending_valid()        # operator-VALID alerts that were waiting for a client mapping
+    except Exception:
+        log.exception("delivering pending VALID alerts failed")
     if os.environ.get("CAMVIEW_TESTING") != "1":
         applied = datasource.sync_project_codes(force=True)   # CAMVIEW_PROJECT_CODES, then Camview's project record
         if applied:

@@ -1086,3 +1086,5 @@ button.x-login:hover{border-color:var(--accent-line);color:var(--text);}
 .codebar.open .codebar-rows{display:flex;}
 /* monitoring detail: one frame, evidence bar */
 .mon-evbar{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;font-size:12px;}
+
+.cl-del:hover{color:var(--st-critical);}

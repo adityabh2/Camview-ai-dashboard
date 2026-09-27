@@ -6,3 +6,10 @@ backend/.env
 .env
 .pytest_cache/
 *.egg-info/
+# databases and backups anywhere (live alert data, users, audit trail)
+*.db
+*.db-wal
+*.db-shm
+backend/backup-*/
+# local scratch
+.claude/settings.local.json

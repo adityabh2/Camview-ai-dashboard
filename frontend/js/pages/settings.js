@@ -176,19 +176,23 @@ export default {
         });
       } else if (tab === 'projects') {
         const extra = data.system.extraProjects || [];
-        const SRC = { default: 'CAMVIEW_PROJECT_ID', extra: 'added here', master: 'master data' };
+        const SRC = { default: 'CAMVIEW_PROJECT_ID', extra: 'added here', master: 'master data', auto: 'found running (automatic)' };
+        const ad = data.system.autoDiscovery || {};
         const feedRows = (data.system.monitoredProjects || []).map((p) => `<tr><td><div class="row tight" style="gap:6px;flex-wrap:wrap"><span class="mono muted" title="Camview project id">${esc(p.externalId)}</span>
               ${edit ? `<input class="input mono" data-pcode="${esc(p.externalId)}" value="${esc(p.code === p.externalId ? '' : p.code)}" placeholder="Project code, e.g. MPESB/G2SG4-CRT-2026/220926/LIVECCTV/IIL" style="min-width:300px"><button class="btn sm" data-pcode-save="${esc(p.externalId)}">${icon('check', 's')} Save code</button>` : `<span class="mono">${esc(p.code)}</span>`}
               ${p.name && p.name !== p.code ? `<span class="muted">${esc(p.name)}</span>` : ''}</div></td>
             <td><span class="b outline">${SRC[p.source] || esc(p.source)}</span></td><td class="num">${fmt.n(p.totalElements)}</td>
             <td>${p.latestAlertAt ? `${fmt.dt(p.latestAlertAt)} <span class="${p.quietHours >= 24 ? 'sla-attention' : 'sla-within'}">${fmt.rel(p.latestAlertAt)}</span>` : '<span class="muted">—</span>'}</td>
-            <td>${p.source === 'extra' && edit ? `<button class="btn sm" data-unmon="${esc(p.externalId)}">${icon('x', 's')} Remove</button>` : p.source === 'default' ? '<span class="muted">change in Connection</span>' : ''}</td></tr>`).join('');
+            <td>${(p.source === 'extra' || p.source === 'auto') && edit ? `<button class="btn sm" data-unmon="${esc(p.externalId)}">${icon('x', 's')} Remove</button>` : p.source === 'default' ? '<span class="muted">change in Connection</span>' : ''}</td></tr>`).join('');
         const stale = data.system.staleProjects || [];
         const staleRows = stale.map((p) => `<tr><td class="mono">${esc(p.code)}${p.name && p.name !== p.code ? ` <span class="muted">${esc(p.name)}</span>` : ''}</td>
             <td class="muted">no longer monitored · centres and cameras built from Camview data are still stored</td>
             <td>${edit ? `<button class="btn sm danger" data-delproj="${esc(p.externalId)}">${icon('trash', 's')} Delete its data</button>` : ''}</td></tr>`).join('');
-        body.innerHTML = card({ title: `${icon('tree')} Monitored projects`, sub: 'Projects come from nomenclature master data. Add project IDs here to monitor them before master data is imported.',
-          body: `<div class="field"><label>Extra project IDs (comma-separated numbers)</label><input class="input" id="pr-ids" value="${esc(extra.join(', '))}" ${dis}></div>
+        body.innerHTML = card({ title: `${icon('tree')} Monitored projects`, sub: 'Running Camview projects are found and monitored automatically. You can also add project IDs by hand; a project you remove is never added back automatically.',
+          body: `${ad.enabled ? `<div class="banner info" style="margin-bottom:12px">${icon('zap')}<div class="grow"><b>Automatic:</b> every ${ad.everyMinutes} min the server looks for projects with any Camview event in the last ${ad.activeHours} h and monitors them${ad.retireHours ? `; one found this way stops after ${ad.retireHours} h without events` : ''}.
+              <div class="muted">${ad.running ? 'Scanning now…' : ad.lastScanAt ? `Last scan ${fmt.rel(ad.lastScanAt)}${ad.range ? ` (ids ${ad.range[0]}–${ad.range[1]})` : ''}${ad.lastAdded?.length ? ` · added ${esc(ad.lastAdded.join(', '))}` : ''}` : 'First scan runs shortly after start-up.'}${ad.lastError ? ` · <span class="sla-attention">${esc(ad.lastError)}</span>` : ''}</div></div>
+              ${edit ? `<button class="btn sm" id="ad-run" ${ad.running ? 'disabled' : ''}>${icon('refresh', 's')} Scan now</button>` : ''}</div>`
+            : session.mode !== 'demo' ? `<div class="muted" style="margin-bottom:10px">Automatic discovery is off (CAMVIEW_AUTO_DISCOVER=0).</div>` : ''}<div class="field"><label>Extra project IDs (comma-separated numbers)</label><input class="input" id="pr-ids" value="${esc(extra.join(', '))}" ${dis}></div>
             <div class="muted" style="margin-bottom:10px">Available to you now: ${session.projects.map((p) => `<span class="b outline mono">${esc(p.code)}</span>`).join(' ') || 'none'}</div>
             ${edit ? '<button class="btn primary" id="pr-save">Save</button>' : ''}
             ${feedRows ? `<div class="table-wrap" style="margin-top:14px"><table class="t"><thead><tr><th>Project</th><th>Monitored because</th><th>Alerts in Camview</th><th>Newest alert</th><th></th></tr></thead><tbody>${feedRows}</tbody></table></div>` : ''}
@@ -204,6 +208,12 @@ export default {
                 <label class="check" style="margin:0"><input type="checkbox" id="pd-recent" checked> Only projects with an alert in the last 7 days</label>
                 <span class="muted" id="pd-note">Up to 2,000 ids per scan (about a minute) · project ids grow over time, so the running exam has the highest id — scan the highest range first</span></div>
               <div id="pd-out" style="margin-top:12px"></div>` }) : '');
+        $('#ad-run', body)?.addEventListener('click', async (e) => {
+          e.currentTarget.disabled = true;
+          const b = e.currentTarget;
+          try { await api.post('/api/settings/projects/auto-discover', {}); toast('Scanning Camview for running projects — new ones appear here in a minute or two', 'success'); setTimeout(() => { if (!ctx.isStale() && tab === 'projects') load(); }, 90000); }
+          catch (err) { toast(err.message, 'error'); b.disabled = false; }
+        });
         $('#pr-save', body)?.addEventListener('click', async () => {
           try { await api.put('/api/settings/projects', { projects: $('#pr-ids', body).value.split(',').map((x) => x.trim()).filter(Boolean) }); toast('Saved — sign in again to refresh your project list', 'success'); load(); }
           catch (e) { toast(e.message, 'error'); }

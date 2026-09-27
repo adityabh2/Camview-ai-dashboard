@@ -32,6 +32,7 @@ def _ticket_row(r):
     return {"id": r["id"], "ref": r["ref"], "alarmId": r["alarm_id"], "camviewTicketId": r["camview_ticket_id"],
             "examId": r["exam_id"], "clientId": r["client_id"], "projectId": r["project_id"], "status": r["status"],
             "result": r["result"], "validatedBy": r["validated_by"], "validatedAt": r["validated_at"],
+            "validatedById": r["validated_by_id"],
             "deliveryStatus": r["delivery_status"], "deliveryNote": r["delivery_note"],
             "deliveredAt": r["delivered_at"], "deliveredBy": r["delivered_by"], "createdAt": r["created_at"],
             "updatedAt": r["updated_at"], "snapshot": db.jload(r["snapshot"], {}) or {},
@@ -434,3 +435,56 @@ def enforce_operator_valid_only():
     logging.getLogger("camview.tickets").info("Operator-VALID-only: %s client deliveries withdrawn, %s automatic tickets "
                                               "cancelled", len(bad), len(cancel))
     return len(bad), len(cancel)
+
+
+def deliver_pending_valid():
+    """Operator-VALID alerts whose ticket could not be delivered yet (no client mapped, several clients, a failed
+    send) are delivered as soon as that is resolved: runs at start-up and whenever exams or clients change.
+    Only automatic delivery sends by itself; controlled delivery marks them READY for the one-click Send.
+    Returns how many were delivered or made ready."""
+    import datasource
+    pol = workflow.policy()
+    # the operator's VALID is the review (ops_review) — a ticket opened earlier by auto-share keeps no validator
+    rows = db.rows("SELECT * FROM tickets WHERE status='open' "
+                   "AND COALESCE(delivery_status, '') IN ('', 'not_deliverable', 'needs_client', 'failed')")
+    if not rows:
+        return 0
+    reviews = db.reviews_for([r["alarm_id"] for r in rows])
+    decided = {i for i, rv in reviews.items() if rv["status"] == "marked_valid"}
+    done = 0
+    with db.batch("deliver-pending"):
+        for r in rows:
+            if r["alarm_id"] not in decided:
+                continue
+            t = _ticket_row(r)
+            live = {a["alarmId"]: a for a in datasource.refresh(str(t["projectId"])).items}
+            alarm = live.get(t["alarmId"]) or t["snapshot"] or {}
+            if not alarm.get("alarmId"):
+                continue
+            if t["alarmId"] in live:                  # the full record (context, exam, evidence) the client view needs
+                alarm = datasource.enrich([alarm])[0]
+            exam = exams.resolve(alarm.get("projectId") or t["projectId"], alarm.get("firstInstance"))
+            clients = exams.clients_for(alarm.get("projectId") or t["projectId"], exam)
+            client = next((c for c in clients if c["id"] == t["clientId"]), None) or (clients[0] if len(clients) == 1 else None)
+            ok, why = _deliverable(alarm, client)
+            if not ok:
+                if why != t["deliveryNote"]:
+                    _set_delivery(t["id"], "needs_client" if len(clients) > 1 else "not_deliverable", why)
+                continue
+            rv = reviews[t["alarmId"]]
+            who = {"id": t.get("validatedById") or rv["validatedById"],
+                   "name": (t.get("validatedBy") if t.get("validatedById") else rv["updatedBy"]) or "Operations"}
+            db.execute("UPDATE tickets SET client_id=?, exam_id=COALESCE(exam_id, ?), result='valid', validated_by=?, "
+                       "validated_by_id=?, validated_at=COALESCE(?, validated_at) WHERE id=?",
+                       (client["id"], exam["id"] if exam else None, who["name"], who["id"],
+                        None if t.get("validatedById") else rv["updatedAt"], t["id"]))
+            if pol.get("deliveryMode", "controlled") == "automatic":
+                deliver(alarm, client, who, exam, "retry")
+                _set_delivery(t["id"], "delivered", None, who, delivered=True)
+            else:
+                _set_delivery(t["id"], "ready", f"Ready to send to {client['name']}")
+            done += 1
+    if done:
+        import logging
+        logging.getLogger("camview.tickets").info("Delivered %s operator-VALID alert(s) that were waiting for a client", done)
+    return done

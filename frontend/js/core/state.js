@@ -36,6 +36,7 @@ export function setSession(data) {
     apiConfigured: !!data.apiConfigured,
     demoUsers: data.demoUsers || [],
     demoPassword: data.demoPassword,
+    passwordMin: data.passwordMin || 5,
   });
   emit('session', session);
 }

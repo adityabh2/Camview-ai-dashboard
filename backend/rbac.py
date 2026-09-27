@@ -149,6 +149,7 @@ def load_user(user_id):
         "id": u["id"], "name": u["name"], "email": u["email"], "roleId": u["role_id"], "roleName": u["role_name"],
         "audience": u["audience"], "permissions": perms, "scopes": scopes, "clientId": u["client_id"],
         "client": client, "clientProjects": client_projects, "isDemo": bool(u["is_demo"]),
+        "pwChangedAt": u.get("pw_changed_at"),
         "_scope_projects": nomenclature.projects_for_scope(scopes),
     }
 
@@ -165,7 +166,10 @@ def public_user(user):
 def current_user():
     if "user" not in g:
         uid = session.get("uid")
-        g.user = load_user(uid) if uid else None
+        u = load_user(uid) if uid else None
+        if u and session.get("pwv") != u.get("pwChangedAt"):
+            u = None                     # password changed or reset since this session signed in: sign in again
+        g.user = u
     return g.user
 
 

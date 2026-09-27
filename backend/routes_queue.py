@@ -488,10 +488,14 @@ def exams_names_from_code(exam_id):
 @bp.route("/api/exams", methods=["POST"])
 @rbac.internal("client.manage")
 def exams_create():
-    return jsonify(exams.create(body(), _user()))
+    out = exams.create(body(), _user())
+    tickets.deliver_pending_valid()              # VALID alerts that were waiting for this exam's client
+    return jsonify(out)
 
 
 @bp.route("/api/exams/<exam_id>", methods=["PUT"])
 @rbac.internal("client.manage")
 def exams_update(exam_id):
-    return jsonify(exams.update(exam_id, body(), _user()))
+    out = exams.update(exam_id, body(), _user())
+    tickets.deliver_pending_valid()
+    return jsonify(out)

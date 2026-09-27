@@ -50,7 +50,7 @@ export default {
             <div class="cl-head"><span>${icon('key', 's')} Client logins <b>${c.users.length}</b></span>${data.canManageLogins ? `<button class="btn sm primary" data-cl-new="${esc(c.id)}">${icon('plus', 's')} Add login</button>` : ''}</div>
             <div data-cl-list="${esc(c.id)}">${loginListHtml(c.users, { canManage: data.canManageLogins, examsById: Object.fromEntries((c.exams || []).map((e) => [e.id, e.name])) })}</div>
             <div class="row" style="margin-top:10px"><button class="btn sm" data-open="${esc(c.id)}">${icon(editable ? 'edit' : 'eye', 's')} ${editable ? 'Manage' : 'Details'}</button>
-              <a class="btn sm ghost" href="#/sharing?tab=shared&clientId=${encodeURIComponent(c.id)}">View shared alerts</a></div>`,
+              <button class="btn sm ghost" data-preview="${esc(c.id)}">${icon('eye', 's')} What the client sees</button></div>`,
         });
       }).join('')}</div>` : empty('No clients yet', editable ? 'Create a client and assign projects to start sharing validated alerts.' : 'No clients have been set up.', 'building');
       // login actions (create / edit / reset password / enable-disable) — shared with the Exams page
@@ -106,6 +106,20 @@ export default {
     }
 
     ctx.onCleanup(delegate(el, 'click', '[data-open]', (e, b) => openClient(b.dataset.open)));
+    // exactly what the client firewall lets this client's logins see, plus VALID alerts still waiting to go out
+    ctx.onCleanup(delegate(el, 'click', '[data-preview]', async (e, b) => {
+      const d = dialog({ title: `${icon('eye')} What the client sees`, size: 'lg', body: '<div class="muted">Loading…</div>' });
+      try {
+        const r = await api.get(`/api/clients/${encodeURIComponent(b.dataset.preview)}/preview`);
+        d.el.querySelector('.d-h h2').innerHTML = `${icon('eye')} ${esc(r.client.name)} sees ${fmt.n(r.total)} alert${r.total === 1 ? '' : 's'}`;
+        d.el.querySelector('.d-b').innerHTML = `
+          ${r.rule ? `<div class="banner info">${icon('shield')}<div>Clients see <b>only alerts your operations team marked VALID</b>. Mark alerts VALID in Alerts or Monitoring and they appear here at once.</div></div>` : ''}
+          ${r.items.length ? `<div class="list" style="border:1px solid var(--border);border-radius:8px">${r.items.map((a) => `<div class="li">${a.imageUrl ? '' : icon('image')}<div class="grow"><div class="t1">${esc(a.alarmTypeName || a.alarmId)} ${a.priority ? `<span class="b p-${esc(a.priority)}">${esc(a.priority)}</span>` : ''}</div>
+              <div class="t2">${esc(a.locationLabel || '')}${a.exam ? ` · ${esc(a.exam.name)}` : ''} · delivered ${fmt.rel(a.sharedAt)}${a.acknowledgedAt ? ' · acknowledged' : ''}</div></div></div>`).join('')}</div>`
+            : empty('Nothing visible yet', 'No alert has been marked VALID for this client yet.', 'share')}
+          ${r.waiting.length ? `<div class="section-title">Marked VALID but not delivered</div><div class="list" style="border:1px solid var(--border);border-radius:8px">${r.waiting.map((t) => `<div class="li"><div class="grow"><div class="t1 mono">${esc(t.ref)} · ${esc(t.alarm_id)}</div><div class="t2">${esc(t.delivery_status || 'waiting')} — ${esc(t.delivery_note || '')}</div></div></div>`).join('')}</div>` : ''}`;
+      } catch (err) { d.el.querySelector('.d-b').innerHTML = errorBox(err, { retry: false }); }
+    }));
     $('#c-new', el)?.addEventListener('click', () => {
       dialog({ title: `${icon('plus')} New client`,
         body: `<div class="field"><label>Client name</label><input class="input" id="nc-name" autofocus></div>

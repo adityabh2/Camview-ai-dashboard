@@ -318,11 +318,13 @@ def start_warmer():
     def loop():
         while True:
             try:
+                auto_discover()                          # running projects are monitored without anyone typing an id
                 prune_stale_projects()
                 sync_project_codes()
                 for pid in all_project_ids():
                     if time.time() - _feed(pid).fetched_at >= config.CACHE_SECONDS:
                         refresh(pid, force=True)
+                tickets_mod().deliver_pending_valid()     # an operator's VALID waiting for a client mapping
             except Exception:
                 log.exception("background refresh loop")
             time.sleep(max(15, config.CACHE_SECONDS // 5))
@@ -568,6 +570,120 @@ def discover_projects(start=1, end=2000, workers=12):
     found = [r for r in found if r["projectId"] not in config.EXCLUDED_PROJECTS]
     found.sort(key=lambda r: (r.get("latestAlertAt") or r.get("latestAt") or ""), reverse=True)
     return {"from": start, "to": end, "projects": found, "scannedAt": db.now_iso()}
+
+
+_auto = {"at": 0.0, "full_at": 0.0, "running": False, "lastScanAt": None, "lastAdded": [], "lastRetired": [],
+         "lastError": None, "range": None}
+FULL_SCAN_HOURS = 6
+
+
+def auto_status():
+    return {"enabled": config.MODE == "live" and config.AUTO_DISCOVER, "running": _auto["running"],
+            "lastScanAt": _auto["lastScanAt"], "range": _auto["range"], "lastAdded": _auto["lastAdded"],
+            "lastRetired": _auto["lastRetired"], "lastError": _auto["lastError"],
+            "everyMinutes": config.AUTO_DISCOVER_MINUTES, "activeHours": config.AUTO_ACTIVE_HOURS,
+            "retireHours": config.AUTO_RETIRE_HOURS, "projects": db.get_setting("auto_projects", {}) or {}}
+
+
+def ignore_auto(pids, ignored=True):
+    """An administrator removed (or re-added) a project: auto-discovery never brings a removed one back."""
+    pids = {str(p) for p in pids}
+    if not pids:
+        return
+    cur = {str(x) for x in (db.get_setting("auto_ignored", []) or [])}
+    db.set_setting("auto_ignored", sorted(cur | pids if ignored else cur - pids))
+    if ignored:
+        auto = db.get_setting("auto_projects", {}) or {}
+        if any(p in auto for p in pids):
+            db.set_setting("auto_projects", {k: v for k, v in auto.items() if k not in pids})
+
+
+def auto_discover(force=False, background=True):
+    """Live mode: finds the Camview projects that are running (any event within AUTO_ACTIVE_HOURS) and
+    monitors them — no project id to type in. Project ids grow over time, so each run scans just around
+    the highest known id (a wide scan every FULL_SCAN_HOURS). A project found this way gets its code from
+    Camview's project record, and is dropped again after AUTO_RETIRE_HOURS without events. Projects an
+    administrator removed, and CAMVIEW_EXCLUDED_PROJECTS, are never added."""
+    if config.MODE != "live" or not config.AUTO_DISCOVER or not config.API_KEY or _auto["running"]:
+        return False
+    now = time.time()
+    if not force and now - _auto["at"] < config.AUTO_DISCOVER_MINUTES * 60:
+        return False
+    _auto["at"], _auto["running"] = now, True
+    if background:
+        threading.Thread(target=_auto_run, args=(force,), name="camview-autodiscover", daemon=True).start()
+    else:
+        _auto_run(force)
+    return True
+
+
+def _auto_run(force):
+    try:
+        auto = db.get_setting("auto_projects", {}) or {}
+        ids = [int(p) for p in list(all_project_ids()) + list(auto) if str(p).isdigit()]
+        top = max(ids or [0])
+        now = time.time()
+        if force or not top or now - _auto["full_at"] >= FULL_SCAN_HOURS * 3600:
+            start, end = max(1, top - 1500), max(top, 1500) + 500
+            _auto["full_at"] = now
+        else:
+            start, end = max(1, top - 50), top + 150
+        res = discover_projects(start, end, workers=8)
+        _auto["range"] = [res["from"], res["to"]]
+        added, retired = _auto_apply(res["projects"])
+        _auto.update(lastScanAt=db.now_iso(), lastAdded=added, lastRetired=retired, lastError=None)
+        if added or retired:
+            log.info("Auto-discovery: monitoring %s, retired %s", added or "-", retired or "-")
+    except Exception as e:                              # a scan never stops the live refresh
+        _auto["lastError"] = str(e)[:200]
+        log.exception("project auto-discovery")
+    finally:
+        _auto["running"] = False
+
+
+def _auto_apply(found):
+    auto = db.get_setting("auto_projects", {}) or {}
+    before = {k: dict(v) for k, v in auto.items()}
+    ignored = {str(x) for x in (db.get_setting("auto_ignored", []) or [])}
+    extras = [str(x) for x in (db.get_setting("extra_projects", []) or [])]
+    monitored = set(all_project_ids())
+    added, retired = [], []
+    for p in found:
+        pid, last = p["projectId"], p.get("latestAt")
+        if p.get("error") or pid in config.EXCLUDED_PROJECTS:
+            continue
+        if pid in auto and last and last > (auto[pid].get("lastSeenAt") or ""):
+            auto[pid]["lastSeenAt"] = last
+        age = _age_minutes(last) if last else None
+        if age is None or age > config.AUTO_ACTIVE_HOURS * 60 or pid in monitored or pid in ignored:
+            continue
+        extras.append(pid)
+        auto[pid] = {"addedAt": db.now_iso(), "lastSeenAt": last}
+        added.append(pid)
+    if config.AUTO_RETIRE_HOURS:
+        for pid, info in list(auto.items()):
+            if pid == config.DEFAULT_PROJECT_ID or pid in added:
+                continue
+            feed = _feeds.get(pid)                     # the live feed knows the newest event best
+            seen = max(info.get("lastSeenAt") or "", getattr(feed, "latest_event_at", None) or "",
+                       getattr(feed, "latest_alert_at", None) or "")
+            age = _age_minutes(seen) if seen else _age_minutes(info.get("addedAt"))
+            if age is not None and age > config.AUTO_RETIRE_HOURS * 60:
+                auto.pop(pid)
+                if pid in extras:
+                    extras.remove(pid)
+                retired.append(pid)
+    if auto != before:
+        db.set_setting("auto_projects", auto)
+    if added or retired:
+        db.set_setting("extra_projects", extras)
+        db.audit("settings.projects_auto", None, "settings", "extra_projects", None,
+                 {"added": added, "retired": retired, "activeHours": config.AUTO_ACTIVE_HOURS})
+        sync_project_codes(force=True)                 # code from Camview's project record -> exam and client
+        for pid in added:
+            refresh(pid, force=True)
+        changes.bump()
+    return added, retired
 
 
 COMPLETENESS_LEVELS = ["project", "tc", "centre", "building", "floor", "room", "camera"]

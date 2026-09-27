@@ -98,9 +98,9 @@ def users_create():
     _guard_role_change(actor, role["id"])
     if db.one("SELECT 1 FROM users WHERE email=?", (email,)):
         raise ApiError("conflict", "A user with that email already exists.", 409)
-    password = str(b.get("password") or "") or secrets.token_urlsafe(12)
-    if len(password) < 10:
-        raise ApiError("bad_request", "Password must be at least 10 characters.", 400)
+    password = str(b.get("password") or "") or secrets.token_urlsafe(9)
+    if len(password) < config.PASSWORD_MIN:
+        raise ApiError("bad_request", f"Password must be at least {config.PASSWORD_MIN} characters.", 400)
     uid = "u-" + uuid.uuid4().hex[:10]
     with db.connect() as conn:
         conn.execute("INSERT INTO users (id, name, email, password_hash, role_id, client_id, status, created_at) "
@@ -112,6 +112,30 @@ def users_create():
                          (uid, s["type"], str(s["value"]).strip()))
     db.audit("user.create", actor, "user", uid, None, {"email": email, "role": role["id"], "scopes": b.get("scopes")})
     return jsonify({"id": uid, "temporaryPassword": None if b.get("password") else password})
+
+
+@bp.route("/api/users/<uid>", methods=["DELETE"])
+@rbac.internal("user.manage")
+def users_delete(uid):
+    """Deletes a login for good (its notifications, views and scopes go with it; the audit trail keeps its name).
+    Never yourself, never the last active Super Admin, and a Super Admin only by someone who manages roles."""
+    actor = _user()
+    u = db.one("SELECT id, email, name, role_id, client_id, status FROM users WHERE id=?", (uid,))
+    if not u:
+        raise ApiError("not_found", "User not found.", 404)
+    if uid == actor["id"]:
+        raise ApiError("bad_request", "You can't delete your own account.", 400)
+    if u["role_id"] == "super_admin":
+        if "role.manage" not in actor["permissions"]:
+            raise ApiError("forbidden", "Only users who manage roles can delete a Super Admin.", 403)
+        others = db.one("SELECT COUNT(*) AS n FROM users WHERE role_id='super_admin' AND status='active' AND id<>?", (uid,))
+        if others["n"] == 0:
+            raise ApiError("bad_request", "At least one active Super Admin is required.", 400)
+    with db.connect() as conn:
+        conn.execute("DELETE FROM users WHERE id=?", (uid,))
+    db.audit("user.delete", actor, "user", uid, {"email": u["email"], "name": u["name"], "role": u["role_id"],
+                                                 "client": u["client_id"]}, None, client_id=u["client_id"])
+    return jsonify({"deleted": uid})
 
 
 @bp.route("/api/users/<uid>", methods=["PUT"])
@@ -154,9 +178,11 @@ def users_update(uid):
                     conn.execute("INSERT OR IGNORE INTO user_scopes (user_id, scope_type, scope_value) VALUES (?,?,?)",
                                  (uid, s["type"], str(s["value"]).strip()))
         if b.get("password"):
-            if len(str(b["password"])) < 10:
-                raise ApiError("bad_request", "Password must be at least 10 characters.", 400)
-            conn.execute("UPDATE users SET password_hash=? WHERE id=?", (generate_password_hash(str(b["password"])), uid))
+            if len(str(b["password"])) < config.PASSWORD_MIN:
+                raise ApiError("bad_request", f"Password must be at least {config.PASSWORD_MIN} characters.", 400)
+            # a reset signs the account out of every browser it is signed in on
+            conn.execute("UPDATE users SET password_hash=?, pw_changed_at=? WHERE id=?",
+                         (generate_password_hash(str(b["password"])), db.now_iso(), uid))
     new = {k: v for k, v in b.items() if k != "password"}
     db.audit("user.update", actor, "user", uid, {k: old.get(k) for k in new}, new,
              note="password reset" if b.get("password") else None)
@@ -310,6 +336,25 @@ def _set_client_projects(cid, projects, actor):
                  note="Access to shared data follows the current assignment (removed projects are no longer visible).")
 
 
+@bp.route("/api/clients/<cid>/preview")
+@rbac.internal("client.view")
+def client_preview(cid):
+    """What this client's logins see right now (every exam; a login limited to exams sees a subset): the exact
+    client firewall output, for administrators to check. Nothing is marked as viewed."""
+    c = db.one("SELECT id, name, status FROM clients WHERE id=?", (cid,))
+    if not c:
+        raise ApiError("not_found", "Client not found.", 404)
+    as_client = {"id": "preview", "audience": "client", "clientId": cid, "client": c, "scopes": {},
+                 "permissions": {"client.portal", "client.evidence"},
+                 "clientProjects": {r["project_id"] for r in db.rows("SELECT project_id FROM client_projects WHERE client_id=?", (cid,))}}
+    items = workflow.client_visible_alarms(as_client) if c["status"] == "active" else []
+    waiting = db.rows("SELECT ref, alarm_id, delivery_status, delivery_note FROM tickets WHERE status='open' AND "
+                      "validated_by_id IS NOT NULL AND COALESCE(delivery_status,'') <> 'delivered' AND "
+                      "(client_id=? OR client_id IS NULL) ORDER BY id DESC LIMIT 20", (cid,))
+    return jsonify({"client": c, "items": items[:50], "total": len(items), "waiting": waiting,
+                    "rule": workflow.policy().get("clientsSeeOperatorValidOnly", True)})
+
+
 @bp.route("/api/clients/<cid>", methods=["PUT"])
 @rbac.internal("client.manage")
 def clients_update(cid):
@@ -336,6 +381,8 @@ def clients_update(cid):
         db.audit("client.update", actor, "client", cid, {k: c.get(k) for k in fields}, fields, client_id=cid)
     if b.get("projects") is not None:
         _set_client_projects(cid, b["projects"], actor)
+    import tickets
+    tickets.deliver_pending_valid()              # projects just mapped: pending VALID alerts can go out
     return jsonify(_client_out(db.one("SELECT * FROM clients WHERE id=?", (cid,))))
 
 
@@ -367,7 +414,7 @@ def settings_get():
                        "setupAllowed": _setup_allowed() and "settings.manage" in user["permissions"]},
         "system": {"feeds": feeds, "channels": notify.CHANNELS, "database": "demo" if config.MODE == "demo" else "live",
                    "extraProjects": db.get_setting("extra_projects", []) or [],
-                   "monitoredProjects": _monitored_projects(),
+                   "monitoredProjects": _monitored_projects(), "autoDiscovery": datasource.auto_status(),
                    "staleProjects": [p for p in nomenclature.projects() if p.get("source") == "camview"
                                      and p["externalId"] not in datasource.all_project_ids()]},
     })
@@ -431,10 +478,12 @@ def settings_policy():
 
 def _monitored_projects():
     extras = {str(x) for x in (db.get_setting("extra_projects", []) or [])}
+    auto = db.get_setting("auto_projects", {}) or {}
     master = {p["externalId"] for p in nomenclature.projects(include_auto=False)}
     out = []
     for pid in datasource.all_project_ids():
-        src = "default" if pid == config.DEFAULT_PROJECT_ID else "extra" if pid in extras else "master"
+        src = "default" if pid == config.DEFAULT_PROJECT_ID else "auto" if pid in auto and pid in extras \
+            else "extra" if pid in extras else "master"
         f = datasource.freshness(datasource.refresh(pid))
         out.append({**project_label(pid), "source": src, "inMasterData": pid in master,
                     "totalElements": f.get("totalElements"), "latestAlertAt": f.get("latestAlertAt"),
@@ -485,6 +534,7 @@ def nomenclature_project_delete(external_id):
     extras = [str(x) for x in (db.get_setting("extra_projects", []) or [])]
     if pid in extras:
         db.set_setting("extra_projects", [x for x in extras if x != pid])
+    datasource.ignore_auto([pid])                     # removed by hand: auto-discovery never adds it back
     removed = nomenclature.delete_auto_project(pid)
     if removed is None and pid not in extras:
         raise ApiError("not_found", "No automatically built project with that id (imported master data is removed "
@@ -510,11 +560,27 @@ def settings_projects_discover():
     return jsonify(out)
 
 
+@bp.route("/api/settings/projects/auto-discover", methods=["POST"])
+@rbac.internal("settings.manage")
+def settings_projects_auto_discover():
+    """Runs the automatic search for running projects now (in the background) instead of waiting."""
+    if config.MODE != "live":
+        raise ApiError("live_mode_not_configured", "Automatic project discovery reads the live Camview feed (demo mode is on).", 503)
+    if not config.AUTO_DISCOVER:
+        raise ApiError("conflict", "Automatic discovery is off (CAMVIEW_AUTO_DISCOVER=0).", 409)
+    started = datasource.auto_discover(force=True)
+    db.audit("settings.projects_auto_scan", _user(), "settings", "projects", None, {"started": started})
+    return jsonify({"started": started, "autoDiscovery": datasource.auto_status()})
+
+
 @bp.route("/api/settings/projects", methods=["PUT"])
 @rbac.internal("settings.manage")
 def settings_projects():
     """Extra project ids to monitor in live mode when master data isn't imported yet."""
     ids = [str(x).strip() for x in (body().get("projects") or []) if str(x).strip().isdigit()]
+    before = {str(x) for x in (db.get_setting("extra_projects", []) or [])}
+    datasource.ignore_auto(before - set(ids))          # removed by hand: auto-discovery never adds them back
+    datasource.ignore_auto(ids, ignored=False)
     db.set_setting("extra_projects", ids)
     db.audit("settings.projects", _user(), "settings", "extra_projects", None, ids)
     return jsonify({"projects": ids})

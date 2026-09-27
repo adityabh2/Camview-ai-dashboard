@@ -832,6 +832,21 @@ reverse proxy and set `CAMVIEW_SECURE_COOKIES=1`.
 
 ---
 
+### CI / CD (GitHub Actions)
+
+`.github/workflows/ci.yml` runs on every push and pull request:
+
+| Job | What it does |
+|---|---|
+| Backend tests | Python 3.12 (as in the image): byte-compile, then the full pytest suite in demo mode with temporary databases and a mocked Camview — no secrets needed. The JUnit report is attached to the run. |
+| Frontend syntax check | `node --check` on every ES module under `frontend/js`. |
+| Docker image | Builds the image and smoke-tests it: starts in demo mode, signs in, reads `/api/queue/summary` and `/api/status`. |
+| Publish (main / `v*` tags only) | Pushes the image to `ghcr.io/<owner>/<repo>` as `latest`, `sha-…` and the version of a `v1.2.3` tag, using the built-in `GITHUB_TOKEN`. |
+
+The image never contains `.env` or a database (`.dockerignore`); production settings are given when the container starts. Database files and backups are git-ignored everywhere.
+
+---
+
 ## 19. What is real, what is V2 (no fake features)
 
 **Real in V1** (stored in Command Center's own database, audited): users, roles,
@@ -877,6 +892,8 @@ object's fields (hence the nomenclature import).
 | LIVE, but every alert is months old | Camview is not producing alerts for the monitored project id (the exam has ended). Settings › Monitored projects › *Find the running project* shows which project ids your key can read and when each last raised an alert. If none is recent, the running exam is on a project this key cannot read — ask Camview for the key/project of the running exam. |
 | Access denied / not available | Your role or scope doesn't include it — ask an administrator. |
 | Charts missing | The chart library CDN is blocked; all numbers remain in tables. |
-#   C a m v i e w - a i - d a s h b o a r d  
- #   C a m v i e w - a i - d a s h b o a r d  
+#   C a m v i e w - a i - d a s h b o a r d 
+ 
+ #   C a m v i e w - a i - d a s h b o a r d 
+ 
  

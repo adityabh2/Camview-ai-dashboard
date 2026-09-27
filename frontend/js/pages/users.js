@@ -1,7 +1,8 @@
 // pages/users.js — USER MANAGEMENT. Roles/permissions are edited in Roles & Permissions, not here.
 
 import * as api from '../core/api.js';
-import { can } from '../core/state.js';
+import { can, session } from '../core/state.js';
+import { deleteLogin } from '../components/clientlogins.js';
 import { setTitle } from '../core/layout.js';
 import { esc, icon, fmt, table, errorBox, skeleton, empty, toast, dialog, debounce, delegate, $, $$ } from '../core/ui.js';
 
@@ -100,8 +101,9 @@ export default {
             <div class="hint muted" style="margin-bottom:8px">Global = all projects. Otherwise the user only sees alarms inside the listed projects / TECs / TCs / centres / cameras.</div>
             <div id="f-scopes">${(u?.scopes?.length ? u.scopes : [{ type: 'global', value: '*' }]).map(scopeRow).join('')}</div>
             <button class="btn sm" id="f-addscope">${icon('plus', 's')} Add scope</button></div>
-          <div class="field" style="margin-top:12px"><label>${isNew ? 'Password (leave blank to generate a temporary one)' : 'Reset password (leave blank to keep)'}</label><input class="input" type="password" id="f-pw" autocomplete="new-password"><div class="hint">Minimum 10 characters.</div></div>`,
-        actions: [{ label: 'Cancel', onClick: ({ close }) => close() },
+          <div class="field" style="margin-top:12px"><label>${isNew ? 'Password (leave blank to generate a temporary one)' : 'Reset password (leave blank to keep)'}</label><input class="input" type="password" id="f-pw" autocomplete="new-password"><div class="hint">Minimum ${session.passwordMin || 5} characters. A reset signs the user out everywhere.</div></div>`,
+        actions: [...(!isNew && can('user.manage') && u.id !== session.user?.id ? [{ label: `${icon('trash', 's')} Delete`, kind: 'danger', onClick: ({ close }) => { close(); deleteLogin(u, load); } }] : []),
+          { label: 'Cancel', onClick: ({ close }) => close() },
           { label: isNew ? 'Create user' : 'Save changes', kind: 'primary', onClick: async ({ close, el: box }) => {
             const role = $('#f-role', box);
             const aud = role.selectedOptions[0]?.dataset.aud;
