@@ -61,7 +61,14 @@ def run():
     ensure_admin(force=not db.rows("SELECT 1 FROM users LIMIT 1"))
     datasource.prune_stale_projects()          # an old exam's auto-built tree never lingers next to the running one
     import tickets
-    tickets.enforce_operator_valid_only()      # clients see only alerts the backend team marked VALID
+    import workflow
+    if not db.get_setting("policy_auto_valid_v1"):
+        # one-time switch of existing installs: every VALID alert goes to the client automatically, whether the
+        # team marked it VALID in Camview or here (INVALID / EXCEPTION never go; camera-offline events never do)
+        workflow.set_policy({"clientsSeeOperatorValidOnly": False, "autoShareValid": True,
+                             "deliveryTrigger": "valid", "deliveryMode": "automatic"}, None)
+        db.set_setting("policy_auto_valid_v1", db.now_iso())
+    tickets.enforce_operator_valid_only()      # only when the stricter operator-VALID rule is switched on
     try:
         tickets.deliver_pending_valid()        # operator-VALID alerts that were waiting for a client mapping
     except Exception:

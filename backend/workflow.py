@@ -39,10 +39,11 @@ POLICY_DEFAULTS = {
     "deliveryTrigger": (os.environ.get("CAMVIEW_DELIVERY_TRIGGER", "valid").strip().lower() or "valid"),
     "autoExams": True,               # client + exam created from the project code (MPESB/G2SG4-CRT-2026/…)
     "deliveryMode": "automatic",     # automatic = visible to the client on VALID; controlled = one-click Send
-    "autoShareValid": False,         # alerts the Camview API reports as VALID are sent to the client automatically
-    # Clients see ONLY alerts an operator of the backend team marked VALID. Camview's own status, arrival and
-    # automatic delivery never make an alert client-visible while this is on (enforced in the client firewall).
-    "clientsSeeOperatorValidOnly": True,
+    "autoShareValid": True,          # alerts the Camview API reports as VALID are sent to the client automatically
+    # Optional stricter rule: clients see ONLY alerts an operator marked VALID in this dashboard. Camview's own
+    # status, arrival and automatic delivery never make an alert client-visible while it is on (client firewall).
+    # Off by default: every VALID alert (marked in Camview or here) goes to the client on its own.
+    "clientsSeeOperatorValidOnly": False,
     "autoShareHours": None,          # optional age limit in hours; None = every valid alert in the live data
     "manualReview": True,            # VALID / INVALID / EXCEPTION buttons (False = Camview's status decides alone)
     "autoNomenclature": True,        # build Project › Centre › Location › Camera from Camview camera data
