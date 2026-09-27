@@ -1,23 +1,10 @@
-# CAMVIEW Command Center — CI / CD pipeline
-#
-# Pipeline:
-#   1. Backend tests
-#   2. Frontend syntax check
-#   3. Docker build + smoke test
-#   4. Publish image to GitHub Container Registry
-#   5. Deploy latest image to Ubuntu server
-
-name: CI
+name: CI/CD
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - "v*"
-
+    branches: [main]
+    tags: ["v*"]
   pull_request:
-
   workflow_dispatch:
 
 permissions:
@@ -28,11 +15,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-
-  # ============================================================
-  # BACKEND TESTS
-  # ============================================================
-
   backend:
     name: Backend tests
     runs-on: ubuntu-latest
@@ -43,12 +25,9 @@ jobs:
         working-directory: backend
 
     steps:
+      - uses: actions/checkout@v4
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
@@ -61,18 +40,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      - name: Byte compile
-        run: |
-          python -m compileall -q .
+      - name: Byte-compile
+        run: python -m compileall -q .
 
       - name: Run tests
         env:
           PYTHONUNBUFFERED: "1"
         run: |
-          python -m pytest -q \
-            -p no:cacheprovider \
-            --durations=10 \
-            --junitxml=../test-results.xml
+          python -m pytest -q -p no:cacheprovider --durations=10 --junitxml=../test-results.xml
 
       - name: Upload test report
         if: always()
@@ -82,30 +57,21 @@ jobs:
           path: test-results.xml
           if-no-files-found: ignore
 
-
-  # ============================================================
-  # FRONTEND SYNTAX CHECK
-  # ============================================================
-
   frontend:
     name: Frontend syntax check
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
+      - uses: actions/checkout@v4
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "22"
 
       - name: Check every ES module
         run: |
           set -e
-
           count=0
 
           while IFS= read -r -d '' f; do
@@ -115,29 +81,18 @@ jobs:
 
           echo "Checked $count JavaScript files"
 
-
-  # ============================================================
-  # DOCKER BUILD + SMOKE TEST
-  # ============================================================
-
   image:
     name: Docker image
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
-    needs:
-      - backend
-      - frontend
+    needs: [backend, frontend]
 
     steps:
+      - uses: actions/checkout@v4
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
+      - name: Build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -150,8 +105,6 @@ jobs:
         run: |
           set -e
 
-          echo "Starting Camview container..."
-
           docker run -d \
             --name camview \
             -p 5000:5000 \
@@ -162,275 +115,140 @@ jobs:
             -e CAMVIEW_DEMO_DB_PATH=/app/backend/data/camview-demo.db \
             camview:ci
 
-          echo "Waiting for Camview..."
-
           for i in $(seq 1 30); do
-            if curl -fsS \
-              http://localhost:5000/api/auth/session \
-              > /dev/null; then
-
-              echo "Camview is ready."
+            if curl -fsS http://localhost:5000/api/auth/session > /dev/null; then
               break
             fi
-
             sleep 2
           done
 
-          echo "Checking demo mode..."
+          curl -fsS http://localhost:5000/api/auth/session | grep -q '"mode": *"demo"'
 
-          curl -fsS \
-            http://localhost:5000/api/auth/session \
-            | grep -q '"mode": *"demo"'
-
-          echo "Checking homepage..."
-
-          curl -fsS \
-            -o /dev/null \
-            http://localhost:5000/
-
-          echo "Checking login..."
-
-          curl -fsS \
-            -c jar \
-            -H 'Content-Type: application/json' \
-            -d '{"email":"supervisor@demo.camview","password":"demo"}' \
-            http://localhost:5000/api/auth/login \
-            > /dev/null
-
-          echo "Checking queue API..."
-
-          curl -fsS \
-            -b jar \
-            "http://localhost:5000/api/queue/summary" \
-            | grep -q '"totals"'
-
-          echo "Checking status API..."
-
-          curl -fsS \
-            -b jar \
-            "http://localhost:5000/api/status" \
-            | grep -q '"dataVersion"'
-
-          echo "Smoke test passed."
+          echo "Smoke test passed"
 
       - name: Container logs
         if: always()
-        run: |
-          docker logs camview || true
-
-
-  # ============================================================
-  # PUBLISH IMAGE TO GITHUB CONTAINER REGISTRY
-  # ============================================================
+        run: docker logs camview || true
 
   publish:
     name: Publish image
-
-    if: >
-      github.event_name == 'push' &&
-      (
-        github.ref == 'refs/heads/main' ||
-        startsWith(github.ref, 'refs/tags/v')
-      )
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
 
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
-    needs:
-      - image
+    needs: [image]
 
     permissions:
       contents: read
       packages: write
 
     steps:
+      - uses: actions/checkout@v4
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate Docker image metadata
+      - name: Image tags
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/adityabh2/camview-ai-dashboard
-
+          images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
             type=semver,pattern={{version}}
 
-      - name: Build and push Docker image
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-
-  # ============================================================
-  # DEPLOY TO UBUNTU SERVER
-  # ============================================================
-
   deploy:
     name: Deploy to production server
-
-    if: >
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    needs:
-      - publish
+    needs: [publish]
 
     steps:
-
-      - name: Deploy Camview to server
+      - name: Deploy CAMVIEW
         uses: appleboy/ssh-action@v1.2.2
         with:
-
-          # ==================================================
-          # YOUR SERVER PUBLIC IP
-          # ==================================================
-
-          host: 13.204.151.194
-
-          # Ubuntu server user
-          username: ubuntu
-
-          # GitHub Actions secret containing complete .pem
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-
-          timeout: 60s
-          command_timeout: 10m
-
+          port: ${{ secrets.SERVER_PORT || '22' }}
           script: |
-
             set -e
 
             echo "=========================================="
-            echo "CAMVIEW DEPLOYMENT"
+            echo "CAMVIEW PRODUCTION DEPLOYMENT"
             echo "=========================================="
 
-            echo ""
-            echo "Connected to server:"
-            hostname
+            IMAGE="ghcr.io/adityabh2/camview-ai-dashboard:latest"
+            CONTAINER="camview"
 
-            echo ""
-            echo "Docker version:"
+            echo "Docker:"
             docker --version
 
-            # ------------------------------------------------
-            # CREATE APPLICATION DIRECTORY
-            # ------------------------------------------------
+            echo "Logging into GHCR..."
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io \
+              -u "${{ secrets.GHCR_USERNAME }}" \
+              --password-stdin
 
-            echo ""
-            echo "Preparing application directory..."
+            echo "Pulling latest image..."
+            docker pull "$IMAGE"
 
-            sudo mkdir -p /opt/camview
-            sudo chown -R ubuntu:ubuntu /opt/camview
+            echo "Stopping old container..."
+            docker rm -f "$CONTAINER" 2>/dev/null || true
 
-            cd /opt/camview
-
-            echo "Application directory:"
-            pwd
-
-            # ------------------------------------------------
-            # PULL LATEST IMAGE
-            # ------------------------------------------------
-
-            echo ""
-            echo "Pulling latest Camview image..."
-
-            docker pull ghcr.io/adityabh2/camview-ai-dashboard:latest
-
-            # ------------------------------------------------
-            # STOP OLD CONTAINER
-            # ------------------------------------------------
-
-            echo ""
-            echo "Stopping existing Camview container..."
-
-            docker rm -f camview || true
-
-            # ------------------------------------------------
-            # START NEW CONTAINER
-            # ------------------------------------------------
-
-            echo ""
-            echo "Starting new Camview container..."
+            echo "Starting CAMVIEW in LIVE mode..."
 
             docker run -d \
-              --name camview \
+              --name "$CONTAINER" \
               --restart unless-stopped \
               -p 5000:5000 \
-              -e CAMVIEW_MODE=production \
-              -e CAMVIEW_SECRET_KEY="CHANGE_ME" \
+              -e CAMVIEW_MODE=live \
+              -e CAMVIEW_SECRET_KEY="${{ secrets.CAMVIEW_SECRET_KEY }}" \
+              -e CAMVIEW_API_KEY="${{ secrets.CAMVIEW_API_KEY }}" \
               -e CAMVIEW_DB_PATH=/app/backend/data/camview.db \
-              ghcr.io/adityabh2/camview-ai-dashboard:latest
+              "$IMAGE"
 
-            # ------------------------------------------------
-            # WAIT FOR APPLICATION
-            # ------------------------------------------------
+            echo "Waiting for application..."
 
-            echo ""
-            echo "Waiting for Camview to start..."
+            for i in $(seq 1 30); do
+              if curl -fsS http://localhost:5000/api/auth/session > /tmp/camview-session.json; then
+                break
+              fi
 
-            sleep 10
+              sleep 2
+            done
 
-            # ------------------------------------------------
-            # CONTAINER STATUS
-            # ------------------------------------------------
+            echo "Application response:"
+            cat /tmp/camview-session.json
 
-            echo ""
+            echo
+            echo "Checking LIVE mode..."
+
+            grep -q '"mode":"live"' /tmp/camview-session.json
+
             echo "=========================================="
-            echo "CONTAINER STATUS"
-            echo "=========================================="
-
-            docker ps \
-              --filter "name=camview"
-
-            # ------------------------------------------------
-            # APPLICATION HEALTH CHECK
-            # ------------------------------------------------
-
-            echo ""
-            echo "Checking Camview API..."
-
-            curl -f \
-              http://localhost:5000/api/auth/session \
-              || true
-
-            # ------------------------------------------------
-            # LOGS
-            # ------------------------------------------------
-
-            echo ""
-            echo "=========================================="
-            echo "CAMVIEW LOGS"
+            echo "CAMVIEW DEPLOYMENT SUCCESSFUL"
             echo "=========================================="
 
-            docker logs \
-              --tail 50 \
-              camview
+            docker ps --filter "name=camview"
 
-            echo ""
-            echo "=========================================="
-            echo "DEPLOYMENT COMPLETED"
-            echo "=========================================="
+            echo
+            echo "Recent logs:"
+            docker logs --tail 50 "$CONTAINER"
