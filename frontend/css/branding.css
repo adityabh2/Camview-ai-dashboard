@@ -1,0 +1,46 @@
+/* =====================================================================
+   Organisation branding — logo + name in the sidebar, sign-in page,
+   presentation mode and the Settings › Branding tab. Tokens from app.css.
+   ===================================================================== */
+
+/* the logo image replaces the default shield mark (never taller than 34px in the sidebar) */
+.brand-logo{display:block;height:34px;max-height:34px;width:auto;max-width:96px;object-fit:contain;flex-shrink:0;}
+.brand-logo.l{height:48px;max-height:48px;max-width:180px;}
+.brand-mark.brand-mark-l{width:48px;height:48px;border-radius:12px;}
+.brand-text,.login-brand > div{min-width:0;}
+.brand .brand-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* long organisation names wrap to two lines instead of being cut */
+.brand .brand-name{overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow-wrap:anywhere;}
+
+/* sign-in page */
+.login-brand{gap:10px;align-items:center;flex-wrap:nowrap;}
+.login-brand [data-brand-mark]{display:flex;}
+.login-brand .brand-name{overflow-wrap:anywhere;}
+.login .l-card-brand{display:none;margin-bottom:20px;}
+@media (max-width:1024px){ .login .l-card-brand{display:flex;} }
+
+/* presentation mode */
+.present .p-brand-mark{display:flex;flex-shrink:0;align-self:center;}
+.present .p-brand{text-transform:uppercase;}
+
+/* Settings › Branding */
+.br-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--sp-5);}
+@media (max-width:900px){ .br-grid{grid-template-columns:minmax(0,1fr);} }
+.br-label{font-size:12px;font-weight:600;color:var(--text-2);}
+.br-drop{display:flex;gap:var(--sp-3);align-items:center;padding:var(--sp-3) var(--sp-4);border:1.5px dashed var(--border-strong);
+  border-radius:var(--r-m);background:var(--panel-2);cursor:pointer;transition:border-color var(--t-fast),background var(--t-fast);}
+.br-drop:hover,.br-drop.over{border-color:var(--accent);background:var(--accent-soft);}
+.br-drop:focus-within{outline:2px solid var(--focus);outline-offset:2px;}
+.br-drop.off{cursor:default;}
+.br-drop.off:hover{border-color:var(--border-strong);background:var(--panel-2);}
+.br-drop-img{width:64px;height:48px;flex-shrink:0;display:grid;place-items:center;border-radius:var(--r-s);
+  background:var(--panel-3);color:var(--text-3);overflow:hidden;}
+.br-drop-img img{max-width:60px;max-height:44px;object-fit:contain;}
+.br-previews{display:grid;gap:var(--sp-3);}
+.br-preview{border:1px solid var(--border);border-radius:var(--r-m);background:var(--bg-2);color:var(--text);overflow:hidden;}
+.br-preview .brand{border-bottom:0;width:100%;max-width:236px;}  /* the sidebar's desktop width */
+.br-cap{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);
+  padding:6px 12px;border-bottom:1px solid var(--border);}
+/* each preview carries its own theme tokens, whatever theme the page is in */
+.bp-dark{color-scheme:dark;--bg-2:#0d121c;--border:#1f2a3d;--text:#e6ebf4;--text-3:#6e7c95;--accent:#3987e5;}
+.bp-light{color-scheme:light;--bg-2:#eef1f6;--border:#e1e6ef;--text:#141c2b;--text-3:#7a879c;--accent:#2a78d6;}

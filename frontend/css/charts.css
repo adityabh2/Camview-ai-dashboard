@@ -1,0 +1,41 @@
+/* =====================================================================
+   charts.css — chart cards (dashboard and anything using .ch-*)
+   Header: title + one-line subtitle on the left, the total as a stat on the right.
+   Legend: series toggles (buttons) whose swatch mirrors the mark; text in text ink.
+   Plot boxes have a fixed height so live updates never shift the layout.
+   ===================================================================== */
+.ch-card{display:flex;flex-direction:column;min-width:0;}
+.ch-card > .card-b{flex:1;display:flex;flex-direction:column;padding:14px 16px 12px;}
+.ch-h{align-items:flex-start;gap:12px;}
+.ch-titles{min-width:0;flex:1;}
+.ch-titles h3{display:flex;align-items:center;gap:7px;margin:0;}
+.ch-titles h3 svg{color:var(--text-3);}
+.ch-titles .sub{margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ch-stat{display:flex;flex-direction:column;align-items:flex-end;line-height:1.1;flex:none;}
+.ch-stat b{font-size:20px;font-weight:650;color:var(--text);letter-spacing:-.01em;font-variant-numeric:proportional-nums;}
+.ch-stat span{font-size:10.5px;color:var(--text-3);margin-top:2px;}
+
+.ch-box{position:relative;height:236px;flex:none;}
+.ch-box > canvas{display:block;}
+.ch-box > .empty{height:100%;padding:16px;}
+.charts .chart-box{position:relative;height:236px;}   /* legacy class kept for other markup */
+
+/* legend toggles */
+.ch-legend{display:flex;flex-wrap:wrap;gap:4px;margin:-4px 0 8px -6px;}
+.ch-key{display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 8px;border:1px solid transparent;border-radius:var(--r-s);
+  background:none;color:var(--text-2);font:inherit;font-size:11.5px;font-weight:600;cursor:pointer;
+  transition:background var(--t-fast),color var(--t-fast),opacity var(--t-fast);}
+.ch-key i{width:10px;height:10px;border-radius:3px;flex:none;transition:opacity var(--t-fast);}
+.ch-key:hover{background:var(--hover);color:var(--text);}
+.ch-key:focus-visible{outline:2px solid var(--focus);outline-offset:1px;}
+.ch-key[aria-pressed="false"]{color:var(--text-3);text-decoration:line-through;text-decoration-color:var(--text-3);}
+.ch-key[aria-pressed="false"] i{opacity:.25;}
+
+@media (max-width:1000px){.charts.g-main{grid-template-columns:minmax(0,1fr);}}
+@media (max-width:560px){
+  .ch-box{height:210px;}
+  .ch-card > .card-b{padding:12px 12px 10px;}
+  .ch-stat b{font-size:18px;}
+}
+@media (prefers-reduced-motion:reduce){.ch-key,.ch-key i{transition:none;}}
+@media (forced-colors:active){.ch-key[aria-pressed="true"]{border-color:CanvasText;}}

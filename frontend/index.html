@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CAMVIEW Command Center</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%233987e5'/%3E%3Cpath d='M12 20s6-3 6-7.5V7l-6-2.2L6 7v5.5C6 17 12 20 12 20z' fill='none' stroke='white' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E">
+<meta name="description" content="Alarm Intelligence • Live Operations • Investigation • Collaboration">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/charts.css">
+<link rel="stylesheet" href="css/incidents.css">
+<link rel="stylesheet" href="css/map.css">
+<link rel="stylesheet" href="css/assistant.css">
+<link rel="stylesheet" href="css/branding.css">
+<!-- the shell's modules are fetched in parallel with main.js instead of one after another -->
+<link rel="modulepreload" href="js/core/state.js">
+<link rel="modulepreload" href="js/core/api.js">
+<link rel="modulepreload" href="js/core/ui.js">
+<link rel="modulepreload" href="js/core/router.js">
+<link rel="modulepreload" href="js/core/layout.js">
+<link rel="modulepreload" href="js/core/live.js">
+<link rel="modulepreload" href="js/core/charts.js">
+<link rel="modulepreload" href="js/core/palette.js">
+<link rel="modulepreload" href="js/components/queue.js">
+<meta name="theme-color" content="#0a0e16" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f3f5f9" media="(prefers-color-scheme: light)">
+</head>
+<body>
+<div id="app" aria-live="polite">
+  <div class="empty" style="min-height:100vh"><div class="e-t">Loading CAMVIEW Command Center…</div></div>
+</div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<noscript><p style="padding:24px">CAMVIEW Command Center needs JavaScript enabled.</p></noscript>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

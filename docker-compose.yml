@@ -1,0 +1,38 @@
+services:
+  camview:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - CAMVIEW_API_KEY=${CAMVIEW_API_KEY:-}
+      - CAMVIEW_API_URL=${CAMVIEW_API_URL:-https://default.prod.api.camviewai.com/alarms/listAlarms}
+      - CAMVIEW_PROJECT_ID=${CAMVIEW_PROJECT_ID:-}
+      - CAMVIEW_PROJECT_CODES=${CAMVIEW_PROJECT_CODES:-}
+      - CAMVIEW_DELIVERY_TRIGGER=${CAMVIEW_DELIVERY_TRIGGER:-arrival}
+      - CAMVIEW_EXCLUDED_PROJECTS=${CAMVIEW_EXCLUDED_PROJECTS:-}
+      - CAMVIEW_ALARM_TYPE_NAMES=${CAMVIEW_ALARM_TYPE_NAMES:-}
+      - CAMVIEW_MODE=${CAMVIEW_MODE:-}
+      # V2 AI assistant (Claude). Empty = the assistant says it is not configured; nothing is sent anywhere.
+      - CAMVIEW_AI_API_KEY=${CAMVIEW_AI_API_KEY:-}
+      - CAMVIEW_AI_MODEL=${CAMVIEW_AI_MODEL:-claude-opus-5-5}
+      # V2 operations map: positions of cities are looked up once on OpenStreetMap (city + state only) and cached.
+      # Set to 0 to never contact OpenStreetMap (only positions entered by an administrator are used).
+      - CAMVIEW_GEOCODE=${CAMVIEW_GEOCODE:-1}
+      # seconds between live reads of Camview (new alerts, fresh photo/video links)
+      - CAMVIEW_CACHE_SECONDS=${CAMVIEW_CACHE_SECONDS:-30}
+      - CAMVIEW_ADMIN_EMAIL=${CAMVIEW_ADMIN_EMAIL:-admin@camview.local}
+      - CAMVIEW_ADMIN_PASSWORD=${CAMVIEW_ADMIN_PASSWORD:-}
+      - CAMVIEW_DEMO_USERS=${CAMVIEW_DEMO_USERS:-0}
+      # Set in the .env file next to this compose file. If empty, the app generates
+      # one at start-up (then users must sign in again after each container restart).
+      - CAMVIEW_SECRET_KEY=${CAMVIEW_SECRET_KEY:-}
+      - PORT=5000
+      - LOG_LEVEL=INFO
+      - CAMVIEW_DB_PATH=/app/backend/data/camview.db
+      - CAMVIEW_DEMO_DB_PATH=/app/backend/data/camview-demo.db
+    volumes:
+      # keep the operator-actions / audit-trail database across restarts
+      - camview_data:/app/backend/data
+
+volumes:
+  camview_data:
