@@ -262,7 +262,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/adityabh2/camview-ai-dashboard
 
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
@@ -301,30 +301,23 @@ jobs:
 
     steps:
 
-      # --------------------------------------------------------
-      # SSH DEPLOYMENT
-      # --------------------------------------------------------
-
       - name: Deploy Camview to server
         uses: appleboy/ssh-action@v1.2.2
         with:
 
-          # ====================================================
-          # CHANGE THIS TO YOUR SERVER PUBLIC IP
-          # ====================================================
+          # ==================================================
+          # YOUR SERVER PUBLIC IP
+          # ==================================================
 
           host: 13.204.151.194
 
-          # Your Ubuntu server username
+          # Ubuntu server user
           username: ubuntu
 
-          # GitHub repository secret containing your .pem key
+          # GitHub Actions secret containing complete .pem
           key: ${{ secrets.SERVER_SSH_KEY }}
 
-          # SSH timeout
           timeout: 60s
-
-          # Maximum command execution time
           command_timeout: 10m
 
           script: |
@@ -363,9 +356,9 @@ jobs:
             # ------------------------------------------------
 
             echo ""
-            echo "Pulling latest Docker image..."
+            echo "Pulling latest Camview image..."
 
-            docker pull ghcr.io/${{ github.repository }}:latest
+            docker pull ghcr.io/adityabh2/camview-ai-dashboard:latest
 
             # ------------------------------------------------
             # STOP OLD CONTAINER
@@ -390,7 +383,7 @@ jobs:
               -e CAMVIEW_MODE=production \
               -e CAMVIEW_SECRET_KEY="CHANGE_ME" \
               -e CAMVIEW_DB_PATH=/app/backend/data/camview.db \
-              ghcr.io/${{ github.repository }}:latest
+              ghcr.io/adityabh2/camview-ai-dashboard:latest
 
             # ------------------------------------------------
             # WAIT FOR APPLICATION
@@ -414,11 +407,11 @@ jobs:
               --filter "name=camview"
 
             # ------------------------------------------------
-            # CHECK APPLICATION
+            # APPLICATION HEALTH CHECK
             # ------------------------------------------------
 
             echo ""
-            echo "Checking application..."
+            echo "Checking Camview API..."
 
             curl -f \
               http://localhost:5000/api/auth/session \
