@@ -1,3 +1,4 @@
+```yaml
 name: CAMVIEW CI/CD
 
 on:
@@ -20,7 +21,7 @@ concurrency:
 
 
 # ============================================================
-# BACKEND TESTS
+# BACKEND
 # ============================================================
 
 jobs:
@@ -66,7 +67,7 @@ jobs:
             --durations=10 \
             --junitxml=../test-results.xml
 
-      - name: Upload test results
+      - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -76,7 +77,7 @@ jobs:
 
 
 # ============================================================
-# FRONTEND CHECK
+# FRONTEND
 # ============================================================
 
   frontend:
@@ -95,21 +96,26 @@ jobs:
           node-version: "22"
 
       - name: Check JavaScript
+        shell: bash
         run: |
           set -e
 
           count=0
 
-          while IFS= read -r -d '' f; do
-            node --experimental-detect-module --check "$f" 2>/dev/null || node --check "$f"
+          while IFS= read -r -d '' file; do
+
+            node --experimental-detect-module --check "$file" 2>/dev/null \
+              || node --check "$file"
+
             count=$((count + 1))
+
           done < <(find frontend/js -name '*.js' -print0)
 
           echo "Checked $count JavaScript files"
 
 
 # ============================================================
-# DOCKER BUILD + SMOKE TEST
+# DOCKER BUILD
 # ============================================================
 
   image:
@@ -139,11 +145,13 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Smoke test
+        shell: bash
         run: |
+
           set -e
 
           docker run -d \
-            --name camview-ci \
+            --name camview \
             -p 5000:5000 \
             -e CAMVIEW_MODE=demo \
             -e CAMVIEW_DEMO_USERS=1 \
@@ -152,42 +160,67 @@ jobs:
             -e CAMVIEW_DEMO_DB_PATH=/app/backend/data/camview-demo.db \
             camview:ci
 
-          echo "Waiting for application..."
+          echo "Waiting for CAMVIEW..."
 
           for i in $(seq 1 30); do
 
             if curl -fsS \
               http://localhost:5000/api/auth/session \
-              > /tmp/session.json; then
+              > /dev/null; then
 
-              echo "Application started"
+              echo "CAMVIEW is responding."
               break
+
             fi
 
             sleep 2
 
           done
 
-          cat /tmp/session.json
+          curl -fsS \
+            http://localhost:5000/api/auth/session \
+            | grep -q '"mode": *"demo"'
 
-          grep -q '"mode": *"demo"' /tmp/session.json
+          curl -fsS \
+            -o /dev/null \
+            http://localhost:5000/
 
-          curl -fsS http://localhost:5000/ > /dev/null
+          curl -fsS \
+            -c jar \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"supervisor@demo.camview","password":"demo"}' \
+            http://localhost:5000/api/auth/login \
+            > /dev/null
+
+          curl -fsS \
+            -b jar \
+            http://localhost:5000/api/queue/summary \
+            | grep -q '"totals"'
+
+          curl -fsS \
+            -b jar \
+            http://localhost:5000/api/status \
+            | grep -q '"dataVersion"'
 
           echo "Smoke test passed"
 
       - name: Container logs
         if: always()
         run: |
-          docker logs camview-ci || true
+          docker logs camview || true
 
 
 # ============================================================
-# PUBLISH TO GITHUB CONTAINER REGISTRY
+# PUBLISH GHCR
 # ============================================================
 
   publish:
-    name: Publish Docker image
+    name: Publish image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    needs:
+      - image
 
     if: >
       github.event_name == 'push' &&
@@ -195,12 +228,6 @@ jobs:
         github.ref == 'refs/heads/main' ||
         startsWith(github.ref, 'refs/tags/v')
       )
-
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    needs:
-      - image
 
     permissions:
       contents: read
@@ -243,55 +270,47 @@ jobs:
 
 
 # ============================================================
-# PRODUCTION DEPLOYMENT
+# DEPLOY EC2
 # ============================================================
 
   deploy:
     name: Deploy CAMVIEW to production
-
-    if: >
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main'
-
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     needs:
       - publish
 
+    if: >
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+
     steps:
 
-      - name: Deploy to server
+      - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.2.2
-
         with:
 
-          # --------------------------------------------------
-          # SERVER CONNECTION
-          # --------------------------------------------------
-
+          # YOUR EXISTING GITHUB SECRET
           host: ${{ secrets.SERVER_IP }}
 
-          username: ${{ secrets.SERVER_USER }}
+          # EC2 UBUNTU USER
+          username: ubuntu
 
+          # SSH
+          port: 22
+          protocol: tcp4
+
+          # YOUR EXISTING PEM SECRET
           key: ${{ secrets.SERVER_SSH_KEY }}
 
-          port: 22
-
-          timeout: 60s
-
+          timeout: 120s
           command_timeout: 10m
-
-
-          # --------------------------------------------------
-          # SERVER COMMANDS
-          # --------------------------------------------------
 
           script: |
 
             set -e
 
-            echo ""
             echo "=========================================="
             echo " CAMVIEW PRODUCTION DEPLOYMENT"
             echo "=========================================="
@@ -310,25 +329,24 @@ jobs:
             # ------------------------------------------------
 
             IMAGE="ghcr.io/adityabh2/camview-ai-dashboard:latest"
-
             CONTAINER="camview"
 
 
             # ------------------------------------------------
-            # LOGIN TO GHCR
+            # LOGIN GHCR
             # ------------------------------------------------
 
             echo ""
-            echo "Logging into GitHub Container Registry..."
+            echo "Logging into GHCR..."
 
-            echo "${{ secrets.GHCR_TOKEN }}" | \
+            echo "${GHCR_TOKEN}" | \
               docker login ghcr.io \
-              --username "${{ secrets.GHCR_USERNAME }}" \
+              --username "${GHCR_USERNAME}" \
               --password-stdin
 
 
             # ------------------------------------------------
-            # PULL LATEST IMAGE
+            # PULL IMAGE
             # ------------------------------------------------
 
             echo ""
@@ -338,39 +356,29 @@ jobs:
 
 
             # ------------------------------------------------
-            # STOP OLD APPLICATION
+            # STOP OLD CONTAINER
             # ------------------------------------------------
 
             echo ""
-            echo "Stopping old CAMVIEW container..."
+            echo "Removing existing CAMVIEW container..."
 
             docker rm -f "$CONTAINER" 2>/dev/null || true
 
 
             # ------------------------------------------------
-            # REMOVE TEST CONTAINER
+            # START APPLICATION
             # ------------------------------------------------
 
             echo ""
-            echo "Removing test container..."
-
-            docker rm -f camview-test 2>/dev/null || true
-
-
-            # ------------------------------------------------
-            # START PRODUCTION APPLICATION
-            # ------------------------------------------------
-
-            echo ""
-            echo "Starting CAMVIEW in LIVE mode..."
+            echo "Starting CAMVIEW..."
 
             docker run -d \
               --name "$CONTAINER" \
               --restart unless-stopped \
               -p 5000:5000 \
               -e CAMVIEW_MODE=live \
-              -e CAMVIEW_SECRET_KEY="${{ secrets.CAMVIEW_SECRET_KEY }}" \
-              -e CAMVIEW_API_KEY="${{ secrets.CAMVIEW_API_KEY }}" \
+              -e CAMVIEW_SECRET_KEY="${CAMVIEW_SECRET_KEY}" \
+              -e CAMVIEW_API_KEY="${CAMVIEW_API_KEY}" \
               -e CAMVIEW_DB_PATH=/app/backend/data/camview.db \
               "$IMAGE"
 
@@ -387,17 +395,18 @@ jobs:
             for i in $(seq 1 30); do
 
               if curl -fsS \
-                http://localhost:5000/api/auth/session \
+                http://127.0.0.1:5000/api/auth/session \
                 > /tmp/camview-session.json; then
 
-                SUCCESS=1
                 echo "CAMVIEW is responding."
+
+                SUCCESS=1
 
                 break
 
               fi
 
-              echo "Waiting... attempt $i/30"
+              echo "Waiting... $i/30"
 
               sleep 2
 
@@ -405,7 +414,7 @@ jobs:
 
 
             # ------------------------------------------------
-            # FAIL IF APPLICATION DID NOT START
+            # FAILURE CHECK
             # ------------------------------------------------
 
             if [ "$SUCCESS" -ne 1 ]; then
@@ -413,7 +422,14 @@ jobs:
               echo ""
               echo "CAMVIEW failed to start."
 
-              docker ps -a
+              echo ""
+              echo "Container status:"
+
+              docker ps -a \
+                --filter "name=$CONTAINER"
+
+              echo ""
+              echo "Container logs:"
 
               docker logs "$CONTAINER" || true
 
@@ -432,50 +448,45 @@ jobs:
             cat /tmp/camview-session.json
 
             echo ""
-            echo "Checking LIVE mode..."
 
-            grep -q '"mode":"live"' \
-              /tmp/camview-session.json
+            if ! grep -q '"mode":"live"' /tmp/camview-session.json; then
+
+              echo "ERROR: CAMVIEW is not running in live mode."
+
+              docker logs --tail 100 "$CONTAINER" || true
+
+              exit 1
+
+            fi
 
 
             # ------------------------------------------------
-            # CHECK CONTAINER
+            # FINAL STATUS
             # ------------------------------------------------
 
             echo ""
-            echo "Container status:"
+            echo "Running containers:"
 
             docker ps \
-              --filter "name=camview"
-
-
-            # ------------------------------------------------
-            # CHECK ENVIRONMENT
-            # ------------------------------------------------
-
-            echo ""
-            echo "CAMVIEW configuration:"
-
-            docker exec "$CONTAINER" \
-              env | grep -E \
-              '^CAMVIEW_MODE=|^CAMVIEW_DB_PATH='
-
-
-            # ------------------------------------------------
-            # SHOW LOGS
-            # ------------------------------------------------
+              --filter "name=$CONTAINER"
 
             echo ""
             echo "Recent CAMVIEW logs:"
 
-            docker logs --tail 50 "$CONTAINER"
-
-
-            # ------------------------------------------------
-            # DONE
-            # ------------------------------------------------
+            docker logs --tail 50 "$CONTAINER" || true
 
             echo ""
             echo "=========================================="
             echo " CAMVIEW DEPLOYMENT SUCCESSFUL"
             echo "=========================================="
+
+        env:
+
+          # GHCR authentication
+          GHCR_USERNAME: ${{ github.repository_owner }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # CAMVIEW production secrets
+          CAMVIEW_SECRET_KEY: ${{ secrets.CAMVIEW_SECRET_KEY }}
+          CAMVIEW_API_KEY: ${{ secrets.CAMVIEW_API_KEY }}
+```
