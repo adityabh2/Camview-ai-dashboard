@@ -623,14 +623,19 @@ def _auto_run(force):
         ids = [int(p) for p in list(all_project_ids()) + list(auto) if str(p).isdigit()]
         top = max(ids or [0])
         now = time.time()
-        if force or not top or now - _auto["full_at"] >= FULL_SCAN_HOURS * 3600:
-            start, end = max(1, top - 1500), max(top, 1500) + 500
+        if not top:                                     # nothing configured yet (no CAMVIEW_PROJECT_ID): ids 1-8000
+            spans = [(i, i + 1999) for i in range(1, 8000, 2000)]
+            _auto["full_at"] = now
+        elif force or now - _auto["full_at"] >= FULL_SCAN_HOURS * 3600:
+            spans = [(max(1, top - 1500), top + 500)]
             _auto["full_at"] = now
         else:
-            start, end = max(1, top - 50), top + 150
-        res = discover_projects(start, end, workers=8)
-        _auto["range"] = [res["from"], res["to"]]
-        added, retired = _auto_apply(res["projects"])
+            spans = [(max(1, top - 50), top + 150)]
+        found = []
+        for start, end in spans:
+            found += discover_projects(start, end, workers=8)["projects"]
+        _auto["range"] = [spans[0][0], spans[-1][1]]
+        added, retired = _auto_apply(found)
         _auto.update(lastScanAt=db.now_iso(), lastAdded=added, lastRetired=retired, lastError=None)
         if added or retired:
             log.info("Auto-discovery: monitoring %s, retired %s", added or "-", retired or "-")

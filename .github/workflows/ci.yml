@@ -322,6 +322,18 @@ jobs:
           IMAGE: ${{ steps.img.outputs.image }}
           GHCR_USER: ${{ github.actor }}
           GHCR_PULL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # app settings: GitHub secret first, else a repository variable (Settings > Secrets and variables > Actions)
+          CAMVIEW_API_KEY: ${{ secrets.CAMVIEW_API_KEY || vars.CAMVIEW_API_KEY }}
+          CAMVIEW_SECRET_KEY: ${{ secrets.CAMVIEW_SECRET_KEY || vars.CAMVIEW_SECRET_KEY }}
+          CAMVIEW_ADMIN_EMAIL: ${{ secrets.CAMVIEW_ADMIN_EMAIL || vars.CAMVIEW_ADMIN_EMAIL }}
+          CAMVIEW_ADMIN_PASSWORD: ${{ secrets.CAMVIEW_ADMIN_PASSWORD || vars.CAMVIEW_ADMIN_PASSWORD }}
+          CAMVIEW_API_URL: ${{ secrets.CAMVIEW_API_URL || vars.CAMVIEW_API_URL }}
+          CAMVIEW_PROJECT_ID: ${{ secrets.CAMVIEW_PROJECT_ID || vars.CAMVIEW_PROJECT_ID }}
+          CAMVIEW_PROJECT_CODES: ${{ secrets.CAMVIEW_PROJECT_CODES || vars.CAMVIEW_PROJECT_CODES }}
+          CAMVIEW_EXCLUDED_PROJECTS: ${{ secrets.CAMVIEW_EXCLUDED_PROJECTS || vars.CAMVIEW_EXCLUDED_PROJECTS }}
+          CAMVIEW_DELIVERY_TRIGGER: ${{ secrets.CAMVIEW_DELIVERY_TRIGGER || vars.CAMVIEW_DELIVERY_TRIGGER }}
+          CAMVIEW_ALARM_TYPE_NAMES: ${{ secrets.CAMVIEW_ALARM_TYPE_NAMES || vars.CAMVIEW_ALARM_TYPE_NAMES }}
+          CAMVIEW_AI_API_KEY: ${{ secrets.CAMVIEW_AI_API_KEY || vars.CAMVIEW_AI_API_KEY }}
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER || 'ubuntu' }}
@@ -329,7 +341,7 @@ jobs:
           port: ${{ env.SERVER_PORT }}
           timeout: 60s
           command_timeout: 10m
-          envs: IMAGE,GHCR_USER,GHCR_PULL_TOKEN
+          envs: IMAGE,GHCR_USER,GHCR_PULL_TOKEN,CAMVIEW_API_KEY,CAMVIEW_SECRET_KEY,CAMVIEW_ADMIN_EMAIL,CAMVIEW_ADMIN_PASSWORD,CAMVIEW_API_URL,CAMVIEW_PROJECT_ID,CAMVIEW_PROJECT_CODES,CAMVIEW_EXCLUDED_PROJECTS,CAMVIEW_DELIVERY_TRIGGER,CAMVIEW_ALARM_TYPE_NAMES,CAMVIEW_AI_API_KEY
           script: |
             set -e
             APP_DIR=/opt/camview
@@ -337,14 +349,36 @@ jobs:
 
             echo "== CAMVIEW deployment: $IMAGE"
 
-            # All settings (API key, project, admin, secret key) live in a file ON THE SERVER only,
-            # never in GitHub. Create it once — see README "Deploy to a server".
-            if [ ! -f "$APP_DIR/.env" ]; then
-              echo "ERROR: $APP_DIR/.env is missing on the server. Create it once (copy your local .env) and re-run."
-              exit 1
+            # Settings come from the GitHub secrets / variables of this repository. They are written to
+            # $APP_DIR/.env (readable by root only); a value not set in GitHub keeps what that file already has.
+            sudo mkdir -p "$APP_DIR"
+            NEW=$(mktemp); chmod 600 "$NEW"
+            printf 'CAMVIEW_MODE=live\nCAMVIEW_DEMO_USERS=0\n' > "$NEW"
+            given=" CAMVIEW_MODE CAMVIEW_DEMO_USERS "
+            for name in CAMVIEW_API_KEY CAMVIEW_SECRET_KEY CAMVIEW_ADMIN_EMAIL CAMVIEW_ADMIN_PASSWORD CAMVIEW_API_URL CAMVIEW_PROJECT_ID CAMVIEW_PROJECT_CODES CAMVIEW_EXCLUDED_PROJECTS CAMVIEW_DELIVERY_TRIGGER CAMVIEW_ALARM_TYPE_NAMES CAMVIEW_AI_API_KEY; do
+              value="$(printenv "$name" || true)"
+              if [ -n "$value" ]; then printf '%s=%s\n' "$name" "$value" >> "$NEW"; given="$given$name "; fi
+            done
+            if sudo test -f "$APP_DIR/.env"; then
+              sudo cat "$APP_DIR/.env" | tr -d '\r' | while IFS= read -r line; do
+                case "$line" in "#"*|"") continue ;; esac
+                key="${line%%=*}"
+                case "$given" in *" $key "*) ;; *) printf '%s\n' "$line" >> "$NEW" ;; esac
+              done
+            fi
+            sudo install -m 600 -o root -g root "$NEW" "$APP_DIR/.env"; rm -f "$NEW"
+            echo "Settings from GitHub:$given"
+            for need in CAMVIEW_API_KEY CAMVIEW_SECRET_KEY CAMVIEW_ADMIN_PASSWORD; do
+              if ! sudo grep -q "^$need=." "$APP_DIR/.env"; then
+                echo "ERROR: $need is not set. Add it in GitHub: Settings > Secrets and variables > Actions > New repository secret."
+                exit 1
+              fi
+            done
+            if ! sudo grep -q "^CAMVIEW_PROJECT_ID=." "$APP_DIR/.env"; then
+              echo "Note: no CAMVIEW_PROJECT_ID - running projects are found automatically (takes a few minutes)."
             fi
 
-            if docker info >/dev/null 2>&1; then DOCKER=docker; else DOCKER="sudo docker"; fi
+            DOCKER="sudo docker"            # sudo: the settings file is readable by root only
 
             echo "$GHCR_PULL_TOKEN" | $DOCKER login ghcr.io -u "$GHCR_USER" --password-stdin
             $DOCKER pull "$IMAGE"

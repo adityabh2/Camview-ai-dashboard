@@ -3,6 +3,11 @@ services:
     build: .
     ports:
       - "5000:5000"
+    restart: unless-stopped
+    # every setting in the .env next to this file (API key, project, admin…) reaches the app.
+    # On a server keep it at /opt/camview/.env and run compose from /opt/camview (or: docker compose --env-file PATH up -d).
+    env_file:
+      - .env
     environment:
       - CAMVIEW_API_KEY=${CAMVIEW_API_KEY:-}
       - CAMVIEW_API_URL=${CAMVIEW_API_URL:-https://default.prod.api.camviewai.com/alarms/listAlarms}

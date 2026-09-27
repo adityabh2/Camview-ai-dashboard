@@ -912,11 +912,20 @@ Every push to `main` that passes the tests is published to GHCR and deployed by 
 
 **AWS security group:** the SSH rule must allow GitHub Actions to connect. GitHub's runners use changing IPs, so set the source of port 22 to `0.0.0.0/0` (login is by key only). A rule limited to your own IP gives `dial tcp …:22: i/o timeout`. Port 5000 (or 80/443 behind a proxy) must be open for users.
 
-**Once on the server:** install Docker, then put the settings in `/opt/camview/.env` (same content as the local `.env`, never committed):
+**App settings come from GitHub too** — add each as a repository *secret* (or, for non-secret values, a *variable*).
+Every deploy writes them to `/opt/camview/.env` on the server (root-only); nothing is hard-coded in the workflow.
 
-```sh
-sudo mkdir -p /opt/camview && sudo nano /opt/camview/.env
-sudo usermod -aG docker ubuntu     # lets the deploy user run docker without sudo
-```
+| Name | Required | Example |
+|---|---|---|
+| `CAMVIEW_API_KEY` | yes | the Camview API key |
+| `CAMVIEW_SECRET_KEY` | yes | any long random string (keeps users signed in across restarts) |
+| `CAMVIEW_ADMIN_PASSWORD` | yes | first administrator's password |
+| `CAMVIEW_ADMIN_EMAIL` | no | `admin` |
+| `CAMVIEW_PROJECT_ID` | no | `2773` — without it running projects are found automatically |
+| `CAMVIEW_PROJECT_CODES` | no | `2773:MPESB/G2SG4-CRT-2026/220926/LIVECCTV/IIL` |
+| `CAMVIEW_EXCLUDED_PROJECTS`, `CAMVIEW_DELIVERY_TRIGGER`, `CAMVIEW_API_URL`, `CAMVIEW_ALARM_TYPE_NAMES`, `CAMVIEW_AI_API_KEY` | no | |
+
+A value not set in GitHub keeps whatever the server's `/opt/camview/.env` already has. The server only needs Docker
+(the deploy user must be allowed to use `sudo`, as `ubuntu` on EC2 is).
 
 Data (users, clients, tickets, audit trail) is kept in the Docker volume `camview_data` across deployments.

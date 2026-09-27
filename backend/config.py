@@ -57,6 +57,16 @@ def _flag(name, default):
 
 def apply():
     """(Re)reads settings from the environment into module globals."""
+    # `docker run --env-file` passes values verbatim: KEY="value" arrives WITH the quotes, and a .env saved on
+    # Windows can carry a BOM or a trailing CR. Clean every CAMVIEW_ value so the API key and ids stay valid.
+    for k in [k for k in os.environ if k.lstrip("﻿").startswith("CAMVIEW_")]:
+        v = os.environ[k].strip().lstrip("﻿")
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+            v = v[1:-1].strip()
+        name = k.lstrip("﻿")
+        if name != k:
+            del os.environ[k]
+        os.environ[name] = v
     global API_URL, API_KEY, DEFAULT_PROJECT_ID, TIMEOUT, MODE, ALARM_TYPE_NAMES, PRIORITY_LABELS
     global HALL_FIELD, FEATURES, ALLOWED_API_HOST_SUFFIX, ALLOW_REMOTE_SETUP, SECRET_KEY
     global LIVE_DB_PATH, DEMO_DB_PATH, WINDOW_PAGES, CACHE_SECONDS, KPI_MAX_PAGES, KPI_USE_HISTORY, PROJECT_CODES
