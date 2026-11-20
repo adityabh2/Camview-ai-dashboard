@@ -41,7 +41,7 @@ def test_default_keeps_the_valid_only_rule():
 def test_policy_in_deliver_all_mode(deliver_all):
     p = workflow.policy()
     assert p["clientsSeeOperatorValidOnly"] is False
-    assert p["deliveryTrigger"] == "all" and p["autoShareValid"] is True and p["manualReview"] is False
+    assert p["deliveryTrigger"] == "all" and p["autoShareValid"] is True and p["manualReview"] is True
 
 
 def test_every_alert_whatever_its_camview_status_reaches_the_client(deliver_all, client_a):
@@ -76,3 +76,27 @@ def test_existing_deliveries_are_not_withdrawn_by_the_old_rule(deliver_all, clie
     tickets.auto_sync([_alarm("ALL-K", 0)])
     assert tickets.enforce_operator_valid_only() == (0, 0)
     assert "ALL-K" in _client_ids(client_a)
+
+
+def test_marking_invalid_takes_it_back_and_keeps_it_internally(deliver_all, client_a, supervisor):
+    import tickets as t_mod
+    tickets.auto_sync([_alarm("ALL-INV", 0)])
+    assert "ALL-INV" in _client_ids(client_a)
+    user = supervisor.get("/api/auth/session")[1]["user"]
+    import rbac
+    full = rbac.load_user(user["id"])
+    t_mod.decide({**_alarm("ALL-INV", 0)}, full, "invalid", "Not a real event")
+    assert "ALL-INV" not in _client_ids(client_a)                      # gone from the client
+    assert db.reviews_for(["ALL-INV"])["ALL-INV"]["status"] == "marked_invalid"   # kept
+    tickets.auto_sync([_alarm("ALL-INV", 0)])                          # next refresh: not sent again
+    assert "ALL-INV" not in _client_ids(client_a)
+
+
+def test_opening_an_alert_acknowledges_it(deliver_all, client_a):
+    tickets.auto_sync([_alarm("ALL-READ", 0)])
+    item = next(a for a in client_a.get("/api/client/alerts")[1]["items"] if a["alarmId"] == "ALL-READ")
+    assert not item.get("acknowledgedAt")
+    s, d = client_a.get("/api/client/alerts/ALL-READ")
+    assert s == 200 and d["acknowledgedAt"] and d["acknowledgedBy"]
+    item = next(a for a in client_a.get("/api/client/alerts")[1]["items"] if a["alarmId"] == "ALL-READ")
+    assert item["acknowledgedAt"]

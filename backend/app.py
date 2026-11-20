@@ -72,6 +72,8 @@ if os.environ.get("CAMVIEW_TESTING") != "1":
     import jobs as _jobs
     _ds.start_warmer()                      # live mode only: background refresh of every project
     _jobs.start_worker()                    # durable jobs (client delivery): resumes unfinished work after a restart
+    import auto_reports as _auto_reports
+    _auto_reports.start()                   # daily and end-of-project reports shared with clients by themselves
 
 from routes_admin import bp as admin_bp      # noqa: E402
 from routes_client import bp as client_bp    # noqa: E402

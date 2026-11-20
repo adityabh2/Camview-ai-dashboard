@@ -152,3 +152,74 @@ a.kpi:hover{background:var(--panel);border-color:var(--accent-line);}
 .l-points{list-style:none;padding:0;margin:20px 0 0;display:flex;flex-direction:column;gap:10px;font-size:14px;color:var(--text-2);}
 .l-points li{display:flex;align-items:center;gap:10px;}
 .l-points li::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0;}
+
+/* ============================== REPORT DOCUMENT ==============================
+   A report reads like a document: header, key figures, sections, footer. Same on screen and on paper. */
+.rdoc{background:var(--panel);border:1px solid var(--border);border-radius:var(--r-l);padding:36px 40px 28px;max-width:1100px;}
+.rdoc-head{display:flex;align-items:flex-start;gap:20px;padding-bottom:22px;margin-bottom:24px;border-bottom:2px solid var(--text);}
+.rdoc-kicker{font-size:12.5px;font-weight:600;color:var(--accent);margin-bottom:6px;}
+.rdoc-head h1{margin:0 0 12px;font-size:clamp(22px,2.4vw,30px);font-weight:700;letter-spacing:-.02em;line-height:1.2;}
+.rdoc-meta{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:13px;}
+.rdoc-meta .muted{margin-right:4px;}
+.rdoc-figs{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0;border:1px solid var(--border);border-radius:var(--r-m);overflow:hidden;}
+.rdoc-fig{padding:16px 18px;border-right:1px solid var(--border);}
+.rdoc-fig:last-child{border-right:0;}
+.rdoc-fig b{display:block;font:600 30px/1.1 var(--mono);letter-spacing:-.02em;}
+.rdoc-fig span{font-size:12.5px;color:var(--text-2);}
+.rdoc-sec{margin-bottom:28px;}
+.rdoc-sec h3{font-size:15px;font-weight:650;margin:0 0 12px;}
+.rdoc-kv{margin-top:14px;}
+.rdoc-note{margin:-6px 0 10px;font-size:12px;}
+.rdoc-bars{display:flex;flex-direction:column;gap:8px;max-width:620px;}
+.rdoc-bar{display:grid;grid-template-columns:110px 1fr 56px;gap:12px;align-items:center;font-size:13px;}
+.rdoc-bar-t{height:10px;border-radius:5px;background:var(--panel-3);overflow:hidden;}
+.rdoc-bar-t span{display:block;height:100%;border-radius:5px;}
+.rdoc-bar b{text-align:right;}
+.rdoc-table{border:1px solid var(--border);border-radius:var(--r-m);max-height:640px;}
+.rdoc-table tbody tr:nth-child(even){background:var(--panel-2);}
+.rdoc-empty{margin:0;}
+.rdoc-foot{border-top:1px solid var(--border);padding-top:14px;font-size:12px;}
+
+/* reports lists */
+.auto-note{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;margin-bottom:18px;border-radius:var(--r-m);
+  background:var(--accent-soft);border:1px solid var(--accent-line);font-size:13px;line-height:1.55;}
+.auto-note svg{color:var(--accent);margin-top:2px;}
+.rlist{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--r-m);overflow:hidden;background:var(--panel);}
+.rlist-row{display:flex;align-items:center;gap:14px;padding:14px 16px;color:var(--text);text-decoration:none;}
+.rlist-row + .rlist-row{border-top:1px solid var(--border);}
+.rlist-row:hover{background:var(--hover);text-decoration:none;}
+.rlist-row .t1{font-weight:600;}
+.rlist-row .t2{font-size:12px;margin-top:2px;}
+.rlist-ic{display:grid;place-items:center;width:36px;height:36px;border-radius:9px;flex-shrink:0;background:var(--panel-3);color:var(--text-2);}
+.rlist-ic.rlist-final{background:var(--accent-soft);color:var(--accent);}
+.rlist-ic.rlist-daily{background:var(--st-good-bg);color:var(--v-valid);}
+
+@media (max-width:700px){
+  .rdoc{padding:20px 18px;}
+  .rdoc-head{flex-direction:column;}
+  .rdoc-bar{grid-template-columns:80px 1fr 44px;}
+}
+@media print{
+  .rdoc{border:0;padding:0;max-width:none;}
+  .rdoc-head{border-bottom-color:#000;}
+  .rdoc-table{max-height:none;overflow:visible;}
+  .rdoc-sec,.rdoc-figs{break-inside:avoid;}
+  .rdoc-table tbody tr:nth-child(even){background:#f3f4f6;}
+}
+/* long reports never push the page sideways: the table scrolls inside its own box */
+.g-side > *,.g-main > *,.stack{min-width:0;}
+.rdoc{min-width:0;}
+.rdoc-table{overflow:auto;}
+.rdoc-table td{max-width:320px;vertical-align:top;}
+/* the top bar never pushes the user menu off screen: long project codes are cut with an ellipsis */
+#project-sel{max-width:clamp(160px,26vw,340px);min-width:0;text-overflow:ellipsis;}
+.topbar{min-width:0;}
+.topbar .title{flex-shrink:1;}
+
+/* alert classification: the feature short code (CHT, MD, TT …) and "Live" for alerts that just happened */
+.b.type-b{font-family:var(--mono);font-weight:600;letter-spacing:.02em;background:var(--accent-soft);color:var(--accent-2);
+  border-color:var(--accent-line);min-width:38px;justify-content:center;}
+.b.type-b.type-unknown{background:var(--st-warning-bg);color:var(--v-pending);border-color:color-mix(in srgb,var(--st-warning) 45%,transparent);}
+.b.live-b{background:var(--st-good-bg);color:var(--v-valid);border-color:color-mix(in srgb,var(--v-valid) 40%,transparent);margin-left:4px;}
+.b.live-b::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;}
+.q-p{display:flex;flex-wrap:wrap;gap:4px;align-items:center;}

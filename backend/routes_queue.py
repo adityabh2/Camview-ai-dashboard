@@ -33,8 +33,8 @@ from routes_ops import slim
 
 bp = Blueprint("queue", __name__)
 
-PRIORITY_SORT_RULE = ("Sorted automatically: priority first (critical → low), then most recent, then most "
-                      "repeated. New alerts are added in place; your current review is never moved.")
+PRIORITY_SORT_RULE = ("Sorted automatically: live alerts first, then the most recent, then the most repeated. "
+                      "New alerts are added in place; your current review is never moved.")
 
 # Two kinds of records arrive from Camview: detections to decide (image + video attached) and camera
 # status events (camera online / offline, no media). The queue shows one kind at a time so the status
@@ -76,7 +76,8 @@ def _all_alarms(user, project=None, code=None):
 
 
 def _smart_key(a):
-    return (a.get("priorityRank", 99), -(datetime.fromisoformat((a.get("lastInstance") or "1970-01-01T00:00:00Z")
+    # live alerts first, then the most recent, then the most repeated (no critical / high / medium guess)
+    return (0 if a.get("live") else 1, -(datetime.fromisoformat((a.get("lastInstance") or "1970-01-01T00:00:00Z")
                                                                   .replace("Z", "+00:00")).timestamp()),
             -(a.get("totalTimesReported") or 1))
 

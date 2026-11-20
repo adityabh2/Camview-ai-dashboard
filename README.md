@@ -41,17 +41,27 @@ and **client representatives**, with one hard rule running through everything:
 | `stop-local.bat` | stops it; the local database is kept |
 | `reset-local-data.bat` | deletes the local database (reviews, tickets, app settings, audit trail) and starts fresh |
 
-### Every alert goes to the client (no marking)
+### Every alert goes to the client; administrators mark INVALID
 
-`docker-compose.local.yml` sets `CAMVIEW_CLIENT_DELIVERY=all`:
+Default (`CAMVIEW_CLIENT_DELIVERY=all`, on servers too):
 
-* Every detection alert is sent to its client the moment Camview reports it, whatever its Camview status.
-  Nobody marks VALID / INVALID; those buttons are hidden. Camera online / offline events are never sent.
-* **Revoke from client** (on the alert, or **Revoke** on Tickets) removes one alert from the client's view.
-  A revoked alert is never sent again automatically; **Send to client again** restores it.
-* Clients receive the alerts of the projects mapped to them (Clients › project codes).
-* Without the setting (`valid`, the default on servers) the old rule applies: clients see only alerts an
-  operator marked VALID.
+* Every detection alert is sent to its client the moment Camview reports it. Nobody has to mark it VALID.
+  Camera online / offline events are never sent.
+* An administrator marks an alert **INVALID** (or **EXCEPTION**) to take it back: it disappears from the
+  client's view, and stays in the system with its decision, ticket and audit trail. It is not sent again
+  unless someone marks it VALID later. **Revoke from client** does the same without a verdict.
+* When a client **opens** an alert in the portal it is acknowledged automatically (recorded, team notified).
+* `CAMVIEW_CLIENT_DELIVERY=valid` restores the old rule: clients see only alerts an operator marked VALID.
+
+### Reports reach clients by themselves
+
+* **Daily report**: every day at `CAMVIEW_DAILY_REPORT_HOUR` (default 20:00 local time, set by
+  `CAMVIEW_REPORT_TZ_OFFSET` minutes, default 330 = India) each active client receives a report of that
+  day's alerts, only on days with alerts. `CAMVIEW_AUTO_REPORT_DAILY=0` switches it off.
+* **Final report**: the day after a project ends (its end date from Camview's Project Lookup, or the exam's
+  end date) each client of that project receives one report of the whole project.
+  `CAMVIEW_AUTO_REPORT_ON_END=0` switches it off.
+* Both are built through the client firewall, shared in the portal (Reports) and announced in-app, once each.
 
 ### Project codes first
 

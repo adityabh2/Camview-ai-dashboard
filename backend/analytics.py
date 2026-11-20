@@ -73,6 +73,15 @@ def status_distribution(alarms):
     return distribution(alarms, lambda a: a.get("lastActionType"), [0, 1, 2, 3], lambda k: labels.get(k, "Unknown"))
 
 
+def type_distribution(alarms):
+    """Alerts by their type from the feature list (code, name, count), most frequent first."""
+    counts = {}
+    for a in alarms:
+        key = (a.get("alarmTypeShort") or "?", a.get("alarmTypeName") or "Unknown alert code")
+        counts[key] = counts.get(key, 0) + 1
+    return [{"key": s, "label": n, "short": s, "count": c} for (s, n), c in sorted(counts.items(), key=lambda kv: -kv[1])]
+
+
 def priority_distribution(alarms):
     return distribution(alarms, lambda a: a.get("priority"), PRIORITY_ORDER, lambda k: str(k).title())
 

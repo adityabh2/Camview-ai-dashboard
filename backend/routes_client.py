@@ -94,6 +94,18 @@ def alert_detail(alarm_id):
                    (db.now_iso(), alarm_id, user["clientId"]))
         db.audit("client.view", user, "alarm", alarm_id, client_id=user["clientId"], project_id=r["project_id"])
         v["viewedAt"] = db.now_iso()
+    if not r["acknowledged_at"]:
+        # opening an alert IS the acknowledgement: the client has read it (recorded, and the team is told)
+        now = db.now_iso()
+        db.execute("UPDATE publications SET acknowledged_by=?, acknowledged_at=?, ack_comment=?, updated_at=? "
+                   "WHERE alarm_id=? AND client_id=? AND acknowledged_at IS NULL",
+                   (user["name"], now, "Read in the client portal", now, alarm_id, user["clientId"]))
+        db.audit("client.acknowledge", user, "alarm", alarm_id, "shared", "acknowledged", r["project_id"], user["clientId"],
+                 note="Automatic: opened in the client portal")
+        notify.to_permission("alarm.publish", "client", f"Client read {alarm_id}", f"{user['name']} ({user['client']['name']})",
+                             f"#/investigations/{alarm_id}", project_id=r["project_id"],
+                             dedupe=f"ack:{alarm_id}:{user['clientId']}")
+        v = _pub_row(user, alarm_id)[1]
     v["canAcknowledge"] = "client.acknowledge" in user["permissions"]
     v["canComment"] = "client.acknowledge" in user["permissions"]
     v["messages"] = workflow.messages_for(alarm_id, user["clientId"])
@@ -147,7 +159,7 @@ def evidence(alarm_id, kind, index):
 def _reports(user):
     if "client.report.view" not in user["permissions"]:
         return []
-    return db.rows("SELECT id, title, type, generated_at FROM reports WHERE client_id=? AND audience='client' "
+    return db.rows("SELECT id, title, type, generated_at, generated_by_name FROM reports WHERE client_id=? AND audience='client' "
                    "AND shared_with_client=1 ORDER BY id DESC", (user["clientId"],))
 
 

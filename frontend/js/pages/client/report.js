@@ -2,7 +2,8 @@
 
 import * as api from '../../core/api.js';
 import { setTitle } from '../../core/layout.js';
-import { esc, icon, fmt, card, errorBox, skeleton, toast, $ } from '../../core/ui.js';
+import { esc, icon, card, errorBox, skeleton, toast, $ } from '../../core/ui.js';
+import { reportDocument } from '../../components/reportdoc.js';
 
 export function renderSections(sections) {
   return sections.map((s) => card({ title: esc(s.title), sub: s.note ? esc(s.note) : '', flush: s.kind === 'table',
@@ -29,11 +30,9 @@ export default {
       if (ctx.isStale()) return;
       const m = r.meta || {};
       setTitle(m.title || 'Report', '<a href="#/client/reports">Reports</a>');
-      el.innerHTML = `<div class="page-head"><div><h2>${esc(m.title)}</h2><p>${esc(m.visibility || '')}</p></div>
-          <div class="row no-print"><button class="btn" id="csv">${icon('download', 's')} CSV</button><button class="btn" id="print">${icon('report', 's')} Print / PDF</button></div></div>
-        ${card({ body: `<dl class="kv"><dt>Audience</dt><dd>${esc(m.audience)}</dd><dt>Client</dt><dd>${esc(m.client || m.scope)}</dd><dt>Data range</dt><dd>${esc(m.dataRange)}</dd>
-          <dt>Generated</dt><dd>${fmt.dt(m.generatedAt)} by ${esc(m.generatedBy)}</dd><dt>Records</dt><dd>${esc(m.recordCount)}</dd></dl>` })}
-        <div style="height:12px"></div>${renderSections(r.sections || [])}`;
+      el.innerHTML = `<div class="page-head no-print"><div class="row" style="gap:12px"><a class="btn icon" href="#/client/reports" aria-label="Back to reports">${icon('left')}</a><h2 style="margin:0">Report</h2></div>
+          <div class="row"><button class="btn" id="csv">${icon('download', 's')} CSV</button><button class="btn primary" id="print">${icon('report', 's')} Print / PDF</button></div></div>
+        ${reportDocument(r, { showAudience: false })}`;
       $('#csv', el).addEventListener('click', async () => { try { await api.download(`/api/client/reports/${encodeURIComponent(id)}/csv`); } catch (e) { toast(e.message, 'error'); } });
       $('#print', el).addEventListener('click', () => window.print());
     };

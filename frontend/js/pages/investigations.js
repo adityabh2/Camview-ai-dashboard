@@ -4,7 +4,7 @@
 import * as api from '../core/api.js';
 import { currentProject, projectInfo, projectCode } from '../core/state.js';
 import { setTitle } from '../core/layout.js';
-import { esc, icon, fmt, card, table, empty, errorBox, skeleton, priorityBadge, toast, delegate, $ } from '../core/ui.js';
+import { esc, icon, fmt, card, table, empty, errorBox, skeleton, priorityBadge, typeBadge, toast, delegate, $ } from '../core/ui.js';
 import { columns, investigateHref } from '../components/alarms.js';
 
 const TABS = [['mine', 'Assigned to me'], ['investigating', 'Investigating'], ['bookmarked', 'Bookmarked'], ['watched', 'Watched cameras & contexts']];
@@ -66,7 +66,7 @@ export default {
               { label: 'Pending', num: true, render: (x) => `<span class="num">${esc(x.pending)}</span>` },
               { label: 'Critical', num: true, render: (x) => `<span class="num">${esc(x.critical)}</span>` },
               { label: 'New since watched', num: true, render: (x) => `<span class="num">${esc(x.newSinceWatched)}</span>` },
-              { label: 'Latest alarm', render: (x) => (x.latest ? `<div class="cell-2">${priorityBadge(x.latest.priority)}<span class="l2">${esc(x.latest.alarmTypeName)} · ${fmt.rel(x.latest.lastInstance)}</span></div>` : '<span class="muted">—</span>') },
+              { label: 'Latest alarm', render: (x) => (x.latest ? `<div class="cell-2">${typeBadge(x.latest)}<span class="l2">${esc(x.latest.alarmTypeName)} · ${fmt.rel(x.latest.lastInstance)}</span></div>` : '<span class="muted">—</span>') },
               { label: 'Watching since', render: (x) => `<span class="dim">${fmt.rel(x.createdAt)}</span>` },
             ],
             rows, rowKey: (x) => `${x.entityType}:${x.entityId}`,
@@ -78,7 +78,7 @@ export default {
           if (ctx.isStale()) return;
           table(body, {
             columns: [
-              { label: 'Priority', render: (x) => priorityBadge(x.priority) },
+              { label: 'Priority', render: (x) => typeBadge(x) },
               { label: 'Alarm', render: (x) => `<div class="cell-2"><a class="mono" href="#/investigations/${encodeURIComponent(x.alarmId)}?projectId=${encodeURIComponent(x.projectId)}">${esc(x.alarmId)}</a><span class="l2">${esc(x.alarmTypeName || '')}</span></div>` },
               { label: 'Camera', render: (x) => `<span class="mono">${esc(x.camera || '—')}</span>` },
               { label: 'Project', render: (x) => esc(x.projectId) },

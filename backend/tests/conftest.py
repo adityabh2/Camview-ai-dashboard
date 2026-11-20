@@ -19,7 +19,8 @@ os.environ.update(
     CAMVIEW_DB_PATH=os.path.join(_TMP, "live-template.db"),
     CAMVIEW_DEMO_DB_PATH=os.path.join(_TMP, "demo-template.db"),
     CAMVIEW_ADMIN_PASSWORD="live-admin-pass-123",
-    CAMVIEW_DELIVERY_TRIGGER="valid",           # tests describe the VALID flow; arrival has its own test
+    CAMVIEW_DELIVERY_TRIGGER="valid",
+    CAMVIEW_CLIENT_DELIVERY="valid",            # most tests describe the operator-VALID rule; test_deliver_all covers "all"           # tests describe the VALID flow; arrival has its own test
     CAMVIEW_PROJECT_CODES="",
 )
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

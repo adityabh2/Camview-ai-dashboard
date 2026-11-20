@@ -1246,7 +1246,14 @@ def reports_list():
                     "exams": [{"id": e["id"], "code": e["code"], "name": e["name"], "clientId": e["clientId"],
                                "clientName": e["clientName"], "projectIds": e["projectIds"]} for e in exams_mod.list_exams()],
                     "canGenerate": "report.generate" in user["permissions"],
-                    "canShare": "report.share" in user["permissions"]})
+                    "canShare": "report.share" in user["permissions"],
+                    "auto": _auto_report_settings()})
+
+
+def _auto_report_settings():
+    import auto_reports
+    s = auto_reports._settings()
+    return {"daily": s["daily"], "onEnd": s["onEnd"], "hour": s["hour"]}
 
 
 @bp.route("/api/reports/preview", methods=["POST"])

@@ -3,7 +3,7 @@
 import * as api from '../core/api.js';
 import { currentProject, projectInfo, can } from '../core/state.js';
 import { setTitle } from '../core/layout.js';
-import { esc, icon, fmt, pager, empty, errorBox, skeleton, priorityBadge, stateBadge, visBadge, delegate, $ } from '../core/ui.js';
+import { esc, icon, fmt, pager, empty, errorBox, skeleton, priorityBadge, typeBadge, stateBadge, visBadge, delegate, $ } from '../core/ui.js';
 import { lightbox } from '../components/evidence.js';
 import { investigateHref } from '../components/alarms.js';
 
@@ -51,7 +51,7 @@ export default {
               ${first ? `<img src="${esc(first)}" alt="" loading="lazy">` : `<span class="play">${icon('play', 'l')}</span>`}
               <span class="tag b outline" style="background:rgba(0,0,0,.55);color:#fff">${icon('image')}${(a.imageUrls || []).length}${a.videoUrl ? ` · ${icon('video')}1` : ''}</span></button>
             <div class="card-b stack" style="gap:6px">
-              <div class="row">${priorityBadge(a.priority)}<a class="mono" href="${investigateHref(a)}">${esc(a.alarmId)}</a></div>
+              <div class="row">${typeBadge(a)}<a class="mono" href="${investigateHref(a)}">${esc(a.alarmId)}</a></div>
               <div style="font-weight:600">${esc(a.alarmTypeName)}</div>
               <div class="dim" style="font-size:12px"><span class="mono">${esc(a.cameraCode)}</span> · ${fmt.dt(a.lastInstance)}</div>
               <div class="row">${stateBadge(a.lastActionType, a.lastActionLabel)}${visBadge(a.visibility?.state, null, a.visibility?.acknowledged)}</div>

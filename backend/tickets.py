@@ -555,7 +555,9 @@ def auto_sync(items):
                 _set_delivery(ticket["id"], "not_deliverable", why)
                 continue
             try:
-                deliver(a, chosen, SYSTEM_USER, exam, "auto_arrival" if arrival else "auto_camview", quiet=quiet)
+                # an EARLIER alert (not live by its own time) is delivered without a "new alert" notification
+                deliver(a, chosen, SYSTEM_USER, exam, "auto_arrival" if arrival else "auto_camview",
+                        quiet=quiet or (arrival and a.get("live") is False))
             except Exception:                     # one failure never blocks the rest; retried next refresh
                 import logging
                 logging.getLogger("camview.tickets").exception("Auto-share delivery failed for %s", a["alarmId"])
@@ -563,7 +565,8 @@ def auto_sync(items):
                 continue
             _set_delivery(ticket["id"], "delivered", None, SYSTEM_USER, delivered=True)
             delivered += 1
-            per_client[chosen["id"]] = per_client.get(chosen["id"], 0) + 1
+            if a.get("live") is not False:            # the batch notice counts only alerts that are new now
+                per_client[chosen["id"]] = per_client.get(chosen["id"], 0) + 1
         if quiet and per_client:
             import notify
             for cid, n in per_client.items():

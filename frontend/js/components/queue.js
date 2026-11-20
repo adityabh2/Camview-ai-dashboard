@@ -2,7 +2,7 @@
 // decision / delivery badges, the "where" line, the alert row and the
 // in-memory queue order used by the review screen's previous / next.
 
-import { esc, icon, fmt, priorityBadge } from '../core/ui.js';
+import { esc, icon, fmt, priorityBadge, typeBadge } from '../core/ui.js';
 
 export const DECISIONS = {
   pending: ['Pending review', 'clock', 'v-pending'],
@@ -111,7 +111,7 @@ export function alertRow(a, { isNew = false, selected = false } = {}) {
   const who = [a.exam?.name, a.client?.name || (a.clients?.length > 1 ? `${a.clients.length} clients` : null)].filter(Boolean).join(' · ');
   const isEvent = a.eventKind === 'camera_status';
   return `<a class="qrow ${isNew ? 'new' : ''} ${selected ? 'sel' : ''} ${isEvent ? 'camev' : ''}" href="${reviewHref(a)}" data-id="${esc(a.alarmId)}" data-key="${esc(a.alarmId)}">
-    <span class="q-p">${priorityBadge(a.priority)}</span>
+    <span class="q-p">${typeBadge(a)}</span>
     <span class="q-main">${thumb(a)}<span class="q-text"><span class="t1">${esc(a.alarmTypeName)}${isNew ? '<span class="b new">NEW</span>' : ''}</span>
       <span class="t2"><span class="mono">${esc(where(a))}</span>${cameraName(a) ? ` · ${esc(cameraName(a))}` : ''}${a.totalTimesReported > 1 ? ` · <b>${a.totalTimesReported}×</b>` : ''}</span>
       <span class="t3">${centreLine(a)}${isEvent ? eventChip(a) : ''}${healthChips(a.health)}${isEvent ? '' : evidenceAvail(a.evidence)}</span></span></span>

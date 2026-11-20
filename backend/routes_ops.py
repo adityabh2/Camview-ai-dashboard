@@ -36,7 +36,7 @@ from routes_common import body, csv_response, paginate, project_label, project_p
 bp = Blueprint("ops", __name__)
 
 LIST_KEYS = ("alarmId", "projectId", "cameraId", "cameraCode", "cameraName", "alarmType", "alarmTypeName",
-             "alarmTypeSeverity", "priority", "priorityLevel", "priorityRank", "priorityConfirmed", "lastActionType",
+             "alarmTypeShort", "alarmTypeKnown", "live", "lastAgeMinutes", "alarmTypeSeverity", "priority", "priorityLevel", "priorityRank", "priorityConfirmed", "lastActionType",
              "lastActionLabel", "firstInstance", "lastInstance", "totalTimesReported", "ticketId", "shiftLabel",
              "suppressed", "workflowState", "workflowLabel", "evidence", "flags", "ageMinutes", "spanMinutes", "sla",
              "hall", "contextCompleteness", "locationLabel", "centreCode", "centreName", "cameraSubLocation", "health",

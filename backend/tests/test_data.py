@@ -168,7 +168,7 @@ def test_kpi_verdicts_separate_camview_and_ops():
 def test_client_report_is_built_from_client_dataset_only(manager):
     s, rep = manager.post("/api/reports/preview", {"type": "client_shared", "clientId": "client-a"})
     assert s == 200 and rep["meta"]["audience"] == "client"
-    table = next(x for x in rep["sections"] if x["title"] == "Shared alerts")
+    table = next(x for x in rep["sections"] if x["title"] == "Alerts")
     shared = {r["alarm_id"] for r in db.rows("SELECT alarm_id FROM publications WHERE client_id='client-a' AND status='shared'")}
     assert {row[0] for row in table["rows"]} == shared
     assert "INTERNAL" not in rep["meta"]["visibility"]

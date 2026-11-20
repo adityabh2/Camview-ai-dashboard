@@ -6,7 +6,7 @@
 import * as api from '../core/api.js';
 import { can, currentProject, projectInfo, on, session, pref, setPref } from '../core/state.js';
 import { setTitle } from '../core/layout.js';
-import { esc, icon, fmt, empty, errorBox, skeleton, toast, priorityBadge, stateBadge, contextPath, delegate, morph, spark, $, $$ } from '../core/ui.js';
+import { esc, icon, fmt, empty, errorBox, skeleton, toast, priorityBadge, typeBadge, stateBadge, contextPath, delegate, morph, spark, $, $$ } from '../core/ui.js';
 import { lightbox } from '../components/evidence.js';
 import { thumb, healthChips } from '../components/queue.js';
 import { kpi } from '../core/ui.js';
@@ -236,7 +236,7 @@ export default {
           ${thumb(a)}
           <div style="min-width:0;flex:1"><div class="t1">${esc(a.alarmTypeName)}${a.flags?.new || isNew ? '<span class="b new">NEW</span>' : ''}</div>
             <div class="t2"><span class="mono">${esc(a.locationLabel || a.cameraCode)}</span>${a.totalTimesReported > 1 ? ` · <b>${a.totalTimesReported}×</b>` : ''}</div>
-            <div class="t3">${priorityBadge(a.priority)}${healthChips(a.health, 'camera')}${a.evidence?.video ? `<span class="ev-av yes">${icon('video', 's')} video</span>` : ''}</div></div>
+            <div class="t3">${typeBadge(a)}${healthChips(a.health, 'camera')}${a.evidence?.video ? `<span class="ev-av yes">${icon('video', 's')} video</span>` : ''}</div></div>
           <div class="when">${fmt.time(a.lastInstance)}<br>${fmt.rel(a.lastInstance)}</div></div>`;
       }).join(''));
       list.items.forEach((a) => seen.add(a.alarmId));
@@ -278,7 +278,7 @@ export default {
       const decided = { marked_valid: 'Valid', marked_invalid: 'Invalid', marked_exception: 'Exception' }[a.review?.status];
       $('#m-detail', el).innerHTML = `
         <div class="card-h"><div><h3>${esc(a.alarmTypeName)}</h3><div class="sub"><span class="mono">${esc(a.alarmId)}</span> · ${fmt.dt(a.lastInstance)} · ${fmt.rel(a.lastInstance)}</div></div>
-          <div class="actions">${priorityBadge(a.priority)}${a.ticket && a.ticket.status === 'open' && a.ticket.deliveryStatus === 'delivered' ? `<span class="b vis-shared" title="Sent to the client">${icon('share')}delivered</span>` : ''}</div></div>
+          <div class="actions">${typeBadge(a)}${a.ticket && a.ticket.status === 'open' && a.ticket.deliveryStatus === 'delivered' ? `<span class="b vis-shared" title="Sent to the client">${icon('share')}delivered</span>` : ''}</div></div>
         <div class="card-b">
           ${clip ? `<div class="shot video"><video src="${esc(clip.url)}" controls playsinline preload="metadata" ${first ? `poster="${esc(first.url)}"` : ''}></video></div>` : ''}
           ${clip ? `<div class="mon-evbar"><span class="muted">${icon('video', 's')} Video clip${first ? ' · frame shown before play' : ''}</span><button class="btn sm" id="m-shot" type="button">${icon('image', 's')} ${ev.length > 1 ? `All evidence (${ev.length})` : 'Full screen'}</button></div>` : ''}

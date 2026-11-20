@@ -18,23 +18,45 @@ from datetime import datetime, timezone
 # lastActionType semantics, as documented: 0=pending, 1=valid, 2=invalid, 3=exception
 ACTION_LABELS = {0: "Pending", 1: "Valid", 2: "Invalid", 3: "Exception"}
 
-# Alert type names. Camview's API sends only the number; these names were read from the alerts themselves
-# (the AI labels in each alert's metadata file and the frames) and are seeded into the Dictionary on the first
-# live start, where an administrator can confirm or rename them.
-DEFAULT_TYPE_NAMES = {
-    1: ("Person Movement", "People detected at an entry / exit or outdoor area (AI label: person)", "medium"),
-    2: ("Vehicle & Person Detected", "Vehicles (car, motorcycle, truck) with people near the entrance", "medium"),
-    3: ("Trunk Open / Closed", "Question-paper trunk seen open or closed (AI labels: open_trunk, closed_trunk)", "high"),
-    4: ("Trunk Changed", "Trunk state changed (AI label: trunk_changed)", "critical"),
-    5: ("Vehicle Movement", "Vehicles (car, truck, bus) in the monitored area", "medium"),
-    6: ("Server Room Activity", "Activity in the server / strong room", "high"),
-    10: ("Camera Status", "Camera online / offline event sent by Camview (no image or video)", "low"),
-    11: ("Camera Tampering", "Scene change or tampering on the camera (AI label: tampering_scene_change)", "high"),
-    12: ("Lab Activity", "Activity among candidates in the exam lab", "medium"),
-    14: ("Mobile Phone Detected", "A mobile phone in the frame (AI label: cell_phone)", "critical"),
-    15: ("Candidate Standing", "A person standing at the frisking / biometric point (AI label: person_standing)", "medium"),
+# Alert types — the official CamviewAI feature list (features.xlsx: ID, Short Name, Feature Name, ID Constant).
+# Camview's API sends only the number (alarmType); this list is the one source of the name and the short
+# classification code shown everywhere. A code that is not in this list is shown as "Unknown alert code N" and
+# reported as a data-quality problem, never under a guessed name.
+FEATURES = {
+    1: ("CD", "Crowd Detection", "FEATURE_ID_CROWD_DETECTION"),
+    2: ("ZI", "Zone Intrusion", "FEATURE_ID_ZONE_INTRUSION"),
+    3: ("TP", "Trunk Placed", "FEATURE_ID_TRUNK_PLACED"),
+    4: ("TO", "Trunk Opened", "FEATURE_ID_TRUNK_OPENED"),
+    5: ("VD", "Vehicle Detection", "FEATURE_ID_VEHICLE_DETECTION"),
+    6: ("NP", "No Person Detection", "FEATURE_ID_NO_PERSON"),
+    8: ("FD", "Fire Detection", "FEATURE_ID_FIRE_DETECTION"),
+    10: ("HMS", "Health Monitoring", "FEATURE_ID_HMS"),
+    11: ("CT", "Camera Tampering", "FEATURE_ID_CAMERA_TAMPERING"),
+    12: ("INM", "Invigilator Not Moving", "FEATURE_ID_INVIGILATOR_STILLNESS"),
+    14: ("MD", "Mobile Detection", "FEATURE_ID_MOBILE_DETECTION"),
+    15: ("MPS", "Multiple People Standing", "FEATURE_ID_PEOPLE_STANDING"),
+    16: ("FM", "Furniture Movement", "FEATURE_ID_FURNITURE_MOVEMENT"),
+    17: ("CHT", "Cheating Detection", "FEATURE_ID_CHEATING"),
+    18: ("TT", "Trunk Tampering", "FEATURE_ID_TRUNK_TAMPERING"),
+    20: ("SSH", "Sack Stack Height", "FEATURE_ID_SACK_STACK_HEIGHT"),
+    21: ("SOR", "Sack Outside ROI", "FEATURE_ID_SACK_OUTSIDE_ROI"),
+    22: ("CE", "Crowd Estimate", "FEATURE_ID_CROWD_ESTIMATE"),
+    23: ("SA", "Suspicious Activity", "FEATURE_ID_SUSPICIOUS_ACTIVITY"),
 }
+FEATURE_NOTE = "From the CamviewAI feature list (features.xlsx)."
+# The Dictionary is seeded from the feature list: (name, description, severity — none assumed)
+DEFAULT_TYPE_NAMES = {tid: (name, f"{short} · {const}", None) for tid, (short, name, const) in FEATURES.items()}
+# Names written by older versions (guessed from AI labels): replaced by the feature list at start-up.
 INFERRED_NOTE = "Name inferred from the alerts' AI labels and frames — confirm or rename in Nomenclature › Dictionary."
+
+
+def type_short(type_id):
+    f = FEATURES.get(type_id)
+    return f[0] if f else None
+
+
+def unknown_type_name(type_id):
+    return f"Unknown alert code {type_id}" if type_id is not None else "Unknown alert code"
 
 # Priority numbers are not documented. This is a best guess and can be
 # overridden with CAMVIEW_PRIORITY_LABELS in backend/.env.
@@ -187,8 +209,11 @@ def normalize(item, type_names=None, priority_labels=None, hall_field=None):
         "projectId": alarm.get("projectId"),
         "alarmType": type_id,
         # dictionary (Nomenclature › Dictionary / CAMVIEW_ALARM_TYPE_NAMES) → name sent by Camview → "Alert type N"
-        "alarmTypeName": type_names.get(type_id) or pretty_name(_first(alarm, TYPE_NAME_KEYS) or "") or md_name
-                         or (f"Alert type {type_id}" if type_id is not None else "Unknown alert type"),
+        # the feature list (or an administrator's name in the Dictionary) → never a guess from AI labels
+        "alarmTypeName": type_names.get(type_id) or (FEATURES[type_id][1] if type_id in FEATURES else None)
+                         or md_name or unknown_type_name(type_id),
+        "alarmTypeShort": type_short(type_id),
+        "alarmTypeKnown": type_id in FEATURES or type_id in type_names,
         "alarmState": alarm.get("alarmState"),
         "lastActionType": action,
         "lastActionLabel": ACTION_LABELS.get(action, "Unknown"),

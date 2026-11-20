@@ -29,7 +29,7 @@ REPORT_TYPES = {
     "investigation": ("Investigation Report", "internal"),
     "client_shared_internal": ("Client Shared Report (internal view)", "internal"),
     "management": ("Management Summary", "internal"),
-    "client_shared": ("Shared Alert Report", "client"),
+    "client_shared": ("Alert Report", "client"),
     "client_summary": ("Client Summary", "client"),
 }
 
@@ -156,8 +156,8 @@ def build_internal(rtype, user, alarms, filters, project_label, alarm=None):
     else:
         sections.append(_kv("Summary", summary))
         if rtype in ("alarm_summary", "management", "project"):
-            sections.append(_table("By priority", ["Priority", "Count"],
-                                   [[d["label"], d["count"]] for d in analytics.priority_distribution(data)]))
+            sections.append(_table("By alert type", ["Alert type", "Count"],
+                                   [[d["label"], d["count"]] for d in analytics.type_distribution(data)]))
             sections.append(_table("By alarm type", ["Type", "Count"],
                                    [[d["label"], d["count"]] for d in analytics.type_distribution(data)]))
         if rtype in ("project", "tc", "management"):
@@ -211,17 +211,23 @@ def build_client(rtype, user, client_id, filters):
         data = [a for a in data if a.get("priority") == filters["priority"]]
     if filters.get("exam"):
         data = [a for a in data if (a.get("exam") or {}).get("id") == filters["exam"]]
-    pri = analytics.priority_distribution(data)
+    if filters.get("projects"):                       # only the alerts of these projects (end-of-project reports)
+        pids = [str(p) for p in filters["projects"]]
+        ids = {r["alarm_id"] for r in db.rows(
+            f"SELECT alarm_id FROM publications WHERE client_id=? AND project_id IN ({','.join('?' for _ in pids)})",
+            [client["id"], *pids])}
+        data = [a for a in data if a["alarmId"] in ids]
+    by_type = analytics.type_distribution(data)
     sections = [
-        _kv("Summary", [("Client", client["name"]), ("Shared alerts", len(data)),
-                        ("Critical", sum(1 for a in data if a.get("priority") == "critical")),
-                        ("Acknowledged", sum(1 for a in data if a.get("acknowledgedAt")))]),
-        _table("By priority", ["Priority", "Count"], [[d["label"], d["count"]] for d in pri]),
+        _kv("Summary", [("Client", client["name"]), ("Alerts delivered", len(data)),
+                        ("Alert types", len(by_type)),
+                        ("Read by the client", sum(1 for a in data if a.get("acknowledgedAt")))]),
+        _table("By alert type", ["Alert type", "Count"], [[d["label"], d["count"]] for d in by_type]),
     ]
     if rtype == "client_shared":
-        sections.append(_table("Shared alerts", ["Alarm ID", "Type", "Priority", "Raised", "Location", "Summary",
-                                                 "Shared at", "Acknowledged"],
-                               [[a["alarmId"], a.get("alarmTypeName"), a.get("priority"), a.get("firstInstance"),
+        sections.append(_table("Alerts", ["Alarm ID", "Code", "Alert type", "Raised", "Location", "Summary",
+                                                 "Delivered", "Read"],
+                               [[a["alarmId"], a.get("alarmTypeShort") or "?", a.get("alarmTypeName"), a.get("firstInstance"),
                                  " / ".join(x["code"] for x in a.get("context", [])), a.get("summary"),
                                  a.get("sharedAt"), a.get("acknowledgedAt") or "—"] for a in data]))
     return {"meta": _meta(title, rtype, "client", user, filters, client["name"], len(data),

@@ -53,10 +53,14 @@ def run():
                 conn.execute("INSERT INTO priority_levels (value, label, rank, confirmed) VALUES (?,?,?,0)",
                              (value, label, rank))
     import alarms
-    with db.connect() as conn:                     # names read from the data, for every type not named yet
+    with db.connect() as conn:                     # the official feature list names every alert code
         for tid, (name, desc, sev) in alarms.DEFAULT_TYPE_NAMES.items():
             conn.execute("INSERT OR IGNORE INTO alarm_types (id, name, description, severity) VALUES (?,?,?,?)",
-                         (tid, name, f"{desc}. {alarms.INFERRED_NOTE}", sev))
+                         (tid, name, f"{desc}. {alarms.FEATURE_NOTE}", sev))
+            # a name an older version GUESSED (or the placeholder "Alert type N") is corrected; a name an
+            # administrator typed in the Dictionary is kept
+            conn.execute("UPDATE alarm_types SET name=?, description=? WHERE id=? AND (description LIKE ? OR name LIKE ?)",
+                         (name, f"{desc}. {alarms.FEATURE_NOTE}", tid, f"%{alarms.INFERRED_NOTE[:40]}%", "Alert type %"))
         for tid, name in config.ALARM_TYPE_NAMES.items():                         # CAMVIEW_ALARM_TYPE_NAMES wins
             conn.execute("INSERT INTO alarm_types (id, name, description) VALUES (?,?,?) "
                          "ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description",

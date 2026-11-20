@@ -4,7 +4,7 @@
 
 import * as api from '../core/api.js';
 import { can } from '../core/state.js';
-import { esc, icon, fmt, dialog, confirmDialog, toast, priorityBadge, visBadge, $, $$ } from '../core/ui.js';
+import { esc, icon, fmt, dialog, confirmDialog, toast, priorityBadge, typeBadge, visBadge, $, $$ } from '../core/ui.js';
 
 const checksHtml = (checks) => `<ul class="check-list">${checks.map((c) => `<li class="${c.ok ? 'ok' : 'no'}"><span class="m">${c.ok ? '✓' : '✕'}</span><span>${esc(c.text)}</span></li>`).join('')}</ul>`;
 
@@ -86,7 +86,7 @@ export async function publishFlow(alarmId, projectId, clientId) {
         <div class="stack">
           <section class="card"><div class="card-h"><h3>1 · Alarm information</h3><div class="actions"><span class="b vis-shared">${icon('eye')}client sees</span></div></div><div class="card-b">
             <dl class="kv"><dt>Alarm</dt><dd class="mono">${esc(pv.alarm.alarmId)}</dd><dt>Type</dt><dd>${esc(pv.alarm.alarmTypeName)}</dd>
-            <dt>Priority</dt><dd>${priorityBadge(pv.alarm.priority)}</dd><dt>Status shown</dt><dd>Validated <span class="muted">(internal: ${esc(pv.alarm.internalState)} · ops ${esc(pv.alarm.review)})</span></dd>
+            <dt>Priority</dt><dd>${typeBadge(pv.alarm)}</dd><dt>Status shown</dt><dd>Validated <span class="muted">(internal: ${esc(pv.alarm.internalState)} · ops ${esc(pv.alarm.review)})</span></dd>
             <dt>Date / time</dt><dd>${fmt.dt(pv.alarm.firstInstance)} → ${fmt.time(pv.alarm.lastInstance)}</dd><dt>Occurrences</dt><dd>${fmt.n(pv.alarm.totalTimesReported)}</dd>
             ${pv.alarm.ticketId ? `<dt>Ticket</dt><dd>#${esc(pv.alarm.ticketId)} <span class="muted">(shown only if the client policy allows)</span></dd>` : ''}</dl></div></section>
           <section class="card"><div class="card-h"><h3>2 · Location context</h3><div class="actions muted">tick what the client may see</div></div><div class="card-b">

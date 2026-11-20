@@ -4,7 +4,7 @@
 import * as api from '../core/api.js';
 import { currentProject, projectInfo } from '../core/state.js';
 import { setTitle } from '../core/layout.js';
-import { esc, icon, fmt, errorBox, skeleton, empty, toast, delegate, priorityBadge, stateBadge, $, $$ } from '../core/ui.js';
+import { esc, icon, fmt, errorBox, skeleton, empty, toast, delegate, priorityBadge, typeBadge, stateBadge, $, $$ } from '../core/ui.js';
 import { investigateHref } from '../components/alarms.js';
 
 const MAX_EVENTS = 1000;
@@ -84,7 +84,7 @@ export default {
           <span class="num nowrap" style="min-width:92px;flex-shrink:0">${esc(fmt.time(e.a.firstInstance))}</span>
           <div class="grow"><div class="t1"><span class="mono">${esc(e.a.cameraCode)}</span><span class="dim" style="font-weight:500">· ${esc(e.a.alarmTypeName)}</span></div>
             <div class="t2"><span class="mono">${esc(e.a.alarmId)}</span> · ${esc((e.a.context?.path || []).slice(1, 4).map((n) => n.code).join(' / ') || 'no context')}${e.a.totalTimesReported > 1 ? ` · ${e.a.totalTimesReported} reports` : ''}</div></div>
-          <div class="row tight">${priorityBadge(e.a.priority)}${stateBadge(e.a.lastActionType, e.a.lastActionLabel)}</div></a>`).join('');
+          <div class="row tight">${typeBadge(e.a)}${stateBadge(e.a.lastActionType, e.a.lastActionLabel)}</div></a>`).join('');
     };
 
     const paintPos = () => {

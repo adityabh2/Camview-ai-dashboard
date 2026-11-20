@@ -3,7 +3,7 @@
 import * as api from '../core/api.js';
 import { currentProject } from '../core/state.js';
 import { setTitle } from '../core/layout.js';
-import { esc, icon, fmt, skeleton, priorityBadge, stateBadge, workflowBadge, visBadge, reviewBadge, contextPath, $ } from '../core/ui.js';
+import { esc, icon, fmt, skeleton, priorityBadge, typeBadge, stateBadge, workflowBadge, visBadge, reviewBadge, contextPath, $ } from '../core/ui.js';
 import { investigateHref } from '../components/alarms.js';
 
 const node = (a, lvl) => a?.context?.[lvl]?.code || '—';
@@ -16,7 +16,7 @@ const ROWS = [
   ['TC', (a) => esc(node(a, 'tc')), (a) => node(a, 'tc')],
   ['Centre', (a) => esc(node(a, 'centre')), (a) => node(a, 'centre')],
   ['Room', (a) => esc(node(a, 'room')), (a) => node(a, 'room')],
-  ['Priority', (a) => priorityBadge(a.priority), (a) => a.priority],
+  ['Priority', (a) => typeBadge(a), (a) => a.priority],
   ['Camview status', (a) => stateBadge(a.lastActionType, a.lastActionLabel), (a) => a.lastActionType],
   ['Ops review', (a) => reviewBadge(a.review?.status), (a) => a.review?.status],
   ['Workflow', (a) => workflowBadge(a.workflowState, a.workflowLabel), (a) => a.workflowState],

@@ -4,7 +4,7 @@
 
 import * as api from '../../core/api.js';
 import { setTitle } from '../../core/layout.js';
-import { esc, icon, fmt, card, errorBox, skeleton, toast, priorityBadge, $ } from '../../core/ui.js';
+import { esc, icon, fmt, card, errorBox, skeleton, toast, priorityBadge, typeBadge, $ } from '../../core/ui.js';
 import { session } from '../../core/state.js';
 import { mountEvidence } from '../../components/player.js';
 import { ackBadge } from './common.js';
@@ -50,7 +50,7 @@ export default {
           <a class="btn icon" href="#/client/alerts" aria-label="Back">${icon('left')}</a>
           <div><h2>${esc(a.alarmTypeName || 'Alert')}</h2>
             <div class="muted" style="margin-top:2px">${a.locationLabel ? `<span class="mono">${esc(a.locationLabel)}</span> · ` : ''}raised ${fmt.dt(a.firstInstance)} · <span class="mono">${esc(a.alarmId)}</span></div>
-            <div class="row" style="margin-top:8px">${priorityBadge(a.priority)}${ackBadge(a)}${a.exam ? `<span class="b outline">${esc(a.exam.name)}</span>` : ''}${a.ticketRef ? `<span class="b outline mono">${esc(a.ticketRef)}</span>` : ''}</div></div></div></div>
+            <div class="row" style="margin-top:8px">${typeBadge(a)}${ackBadge(a)}${a.exam ? `<span class="b outline">${esc(a.exam.name)}</span>` : ''}${a.ticketRef ? `<span class="b outline mono">${esc(a.ticketRef)}</span>` : ''}</div></div></div></div>
         <div class="grid g-side">
           <div class="stack">
             ${card({ title: `${icon('info')} Summary`, body: `<div style="white-space:pre-wrap;font-size:13.5px">${esc(a.summary || 'No summary provided.')}</div>` })}
@@ -67,7 +67,7 @@ export default {
               ${a.ticketRef ? `<dt>Ticket ref</dt><dd class="mono"><b>${esc(a.ticketRef)}</b></dd>` : ''}
               ${a.locationLabel ? `<dt>Location</dt><dd class="mono"><b>${esc(a.locationLabel)}</b></dd>` : ''}
               ${a.cameraName ? `<dt>Camera</dt><dd>${esc(a.cameraName)}</dd>` : ''}
-              <dt>Alert</dt><dd class="mono">${esc(a.alarmId)}</dd><dt>Type</dt><dd>${esc(a.alarmTypeName)}</dd><dt>Priority</dt><dd>${priorityBadge(a.priority)}</dd>
+              <dt>Alert</dt><dd class="mono">${esc(a.alarmId)}</dd><dt>Type</dt><dd>${esc(a.alarmTypeName)}</dd><dt>Priority</dt><dd>${typeBadge(a)}</dd>
               <dt>Status</dt><dd>${esc(a.status)}</dd>
               ${(a.context || []).map((c) => `<dt>${esc(c.level === 'tc' ? c.level.toUpperCase() : c.level[0].toUpperCase() + c.level.slice(1))}</dt><dd><span class="mono">${esc(c.code)}</span>${c.name && c.name !== c.code ? ` <span class="muted">${esc(c.name)}</span>` : ''}</dd>`).join('')}
               <dt>First detected</dt><dd class="num">${fmt.dt(a.firstInstance)}</dd><dt>Last detected</dt><dd class="num">${fmt.dt(a.lastInstance)}</dd>
@@ -75,8 +75,8 @@ export default {
               ${a.shiftLabel ? `<dt>Shift</dt><dd>${esc(a.shiftLabel)}</dd>` : ''}
               ${a.ticketId ? `<dt>Ticket</dt><dd>#${esc(a.ticketId)}</dd>` : ''}
               <dt>Shared</dt><dd class="num">${fmt.dt(a.sharedAt)}</dd></dl>` })}
-            ${card({ title: `${icon('check')} Acknowledgement`, body: a.acknowledgedAt
-              ? `<div>${ackBadge(a)}</div><div class="dim" style="margin-top:8px">By <b>${esc(a.acknowledgedBy)}</b> · ${fmt.dt(a.acknowledgedAt)}</div>${a.ackComment ? `<div class="banner info" style="margin-top:8px">“${esc(a.ackComment)}”</div>` : ''}`
+            ${card({ title: `${icon('check')} Read`, body: a.acknowledgedAt
+              ? `<div>${ackBadge(a)}</div><div class="dim" style="margin-top:8px">Read by <b>${esc(a.acknowledgedBy)}</b> · ${fmt.dt(a.acknowledgedAt)}</div><div class="muted" style="margin-top:6px">Opening an alert marks it as read and lets the operations team know.</div>`
               : a.canAcknowledge
                 ? `<p class="dim">Let the operations team know you have seen this alert.</p><div class="field"><label for="ack-c">Comment (optional)</label><textarea class="input" id="ack-c" rows="3" maxlength="2000"></textarea></div><button class="btn primary" id="ack">${icon('check', 's')} Acknowledge</button>`
                 : '<div class="muted">Awaiting acknowledgement. Your role can view alerts but not acknowledge them.</div>' })}

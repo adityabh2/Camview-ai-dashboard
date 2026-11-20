@@ -8,7 +8,7 @@ import * as api from '../core/api.js';
 import { session, isClient, currentProject, can, pref, setPref } from '../core/state.js';
 import { bar, destroyAll } from '../core/charts.js';
 import { brand, brandMarkHtml, brandTitle, loadBranding } from '../core/layout.js';
-import { esc, icon, fmt, errorBox, bars, legend, PRIORITY_COLORS, VERDICT_COLORS, priorityBadge, $, $$ } from '../core/ui.js';
+import { esc, icon, fmt, errorBox, bars, legend, PRIORITY_COLORS, VERDICT_COLORS, priorityBadge, typeBadge, $, $$ } from '../core/ui.js';
 
 const INTERNAL_SLIDES = [['overview', 'Overview'], ['activity', 'Activity'], ['priority', 'Priority & status'], ['shift', 'Shift'], ['cameras', 'Camera activity'], ['critical', 'Critical alerts']];
 const CLIENT_SLIDES = [['overview', 'Overview'], ['priority', 'Priority'], ['recent', 'Recently shared']];
@@ -103,7 +103,7 @@ export default {
     const prioBars = () => bars(d.priorityDistribution.map((x) => ({ ...x, color: PRIORITY_COLORS[x.key] || 'var(--st-neutral)', sw: PRIORITY_COLORS[x.key] })));
     const statusBars = () => bars(d.statusDistribution.map((x) => ({ ...x, color: VERDICT_COLORS[x.label] || 'var(--st-neutral)', sw: VERDICT_COLORS[x.label] })));
     const activityChart = (h = 330) => `<div class="card-h"><h3>Activity — last 24 hours</h3><div class="actions">${legend(PRIOS.map((k) => ({ label: k, color: PRIORITY_COLORS[k] })))}</div></div><div class="card-b"><div class="chart lg" style="height:${h}px"><canvas id="pr-hourly" aria-label="Hourly activity"></canvas></div></div>`;
-    const criticalList = (big) => (d.critical.length ? d.critical.map((a) => `<div class="li" style="${big ? 'font-size:16px;padding:14px 18px' : ''}">${priorityBadge(a.priority)}<div class="grow"><div class="t1">${esc(a.alarmTypeName)} <span class="mono muted" style="font-weight:400">${esc(a.alarmId)}</span></div><div class="t2">${esc((a.context?.path || []).map((n) => n.code).join(' / ') || a.cameraCode)} · ${fmt.rel(a.lastInstance)}</div></div></div>`).join('')
+    const criticalList = (big) => (d.critical.length ? d.critical.map((a) => `<div class="li" style="${big ? 'font-size:16px;padding:14px 18px' : ''}">${typeBadge(a)}<div class="grow"><div class="t1">${esc(a.alarmTypeName)} <span class="mono muted" style="font-weight:400">${esc(a.alarmId)}</span></div><div class="t2">${esc((a.context?.path || []).map((n) => n.code).join(' / ') || a.cameraCode)} · ${fmt.rel(a.lastInstance)}</div></div></div>`).join('')
       : '<div class="empty"><div class="e-t">No critical alarms pending</div></div>');
     const tecTable = () => (d.byTc.length ? `<table class="t"><thead><tr><th>TC</th><th class="num">Alarms</th><th class="num">Critical</th><th class="num">Pending</th></tr></thead><tbody>${d.byTc.map((r) => `<tr><td><span class="mono">${esc(r.code)}</span> <span class="muted">${esc(r.name && r.name !== r.code ? r.name : '')}</span></td><td class="num">${r.total}</td><td class="num">${r.critical}</td><td class="num">${r.pending}</td></tr>`).join('')}</tbody></table>` : '<div class="empty"><div class="e-t">No context mapped</div></div>');
     const cameraTable = () => {
@@ -113,7 +113,7 @@ export default {
       return `<table class="t" style="font-size:15px"><thead><tr><th>Camera</th><th>Location</th><th style="width:30%">Activity</th><th class="num">Alarms</th><th class="num">Critical</th><th class="num">Pending</th></tr></thead><tbody>
         ${cams.map((c) => `<tr><td class="mono">${esc(c.code)}</td><td class="dim">${esc(c.location || 'not mapped')}</td><td><span class="bar-track" style="display:block;height:10px"><span class="bar-fill" style="display:block;width:${Math.max(1, (c.count / max) * 100)}%"></span></span></td><td class="num">${c.count}</td><td class="num">${c.critical}</td><td class="num">${c.pending}</td></tr>`).join('')}</tbody></table>`;
     };
-    const recentShared = (big) => (d.recent.length ? d.recent.map((a) => `<div class="li" style="font-size:${big ? 16 : 15}px">${priorityBadge(a.priority)}<div class="grow"><div class="t1">${esc(a.alarmTypeName)} <span class="mono muted">${esc(a.alarmId)}</span></div><div class="t2">${esc((a.context || []).map((c) => c.code).join(' / '))} · shared ${fmt.rel(a.sharedAt)}</div></div>${a.acknowledgedAt ? `<span class="b vis-shared">${icon('check')}acknowledged</span>` : '<span class="b vis-ready_for_review">awaiting</span>'}</div>`).join('')
+    const recentShared = (big) => (d.recent.length ? d.recent.map((a) => `<div class="li" style="font-size:${big ? 16 : 15}px">${typeBadge(a)}<div class="grow"><div class="t1">${esc(a.alarmTypeName)} <span class="mono muted">${esc(a.alarmId)}</span></div><div class="t2">${esc((a.context || []).map((c) => c.code).join(' / '))} · shared ${fmt.rel(a.sharedAt)}</div></div>${a.acknowledgedAt ? `<span class="b vis-shared">${icon('check')}acknowledged</span>` : '<span class="b vis-ready_for_review">awaiting</span>'}</div>`).join('')
       : '<div class="empty"><div class="e-t">No alerts shared yet</div></div>');
 
     const grid = () => {

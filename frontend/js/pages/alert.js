@@ -8,7 +8,7 @@
 import * as api from '../core/api.js';
 import { on, pref, setPref, projectCode, session } from '../core/state.js';
 import { setTitle } from '../core/layout.js';
-import { esc, icon, fmt, empty, errorBox, skeleton, toast, priorityBadge, stateBadge, confirmDialog, $, $$ } from '../core/ui.js';
+import { esc, icon, fmt, empty, errorBox, skeleton, toast, priorityBadge, typeBadge, stateBadge, confirmDialog, $, $$ } from '../core/ui.js';
 import { mountEvidence } from '../components/player.js';
 import { status as liveStatus } from '../core/live.js';
 import { decisionBadge, ackBadge, deliveryBadge, ticketChip, queueNav, queueHref, reviewHref, where, cameraName, healthChips } from '../components/queue.js';
@@ -283,7 +283,7 @@ export default {
             <a class="btn icon" href="${queueHref()}" aria-label="Back to alerts (Esc)">${icon('left')}</a>
             <div class="grow" style="min-width:0">
               <div class="rv-kicker"><span id="rv-live">${liveTag()}</span>${data.alert?.source === 'stored' ? '<span class="live-tag delayed" title="This alert is not in the current Camview read (Camview unreachable, or it left the live window). Shown from the stored copy of the last data Camview sent.">STORED COPY</span>' : ''}${who.map((x) => `<span class="${/NOT MAPPED/.test(x) ? 'nm-miss' : ''}">${esc(x)}</span>`).join('<span class="sep">|</span>')}${phaseChip()}</div>
-              <div class="row" style="gap:8px" id="rv-title">${priorityBadge(a.priority)}<h2>${esc(a.alarmTypeName)}</h2>${decisionBadge(a.decision, a.decisionSource)}${ackBadge(a)}${ticketChip(data.ticket)}</div>
+              <div class="row" style="gap:8px" id="rv-title">${typeBadge(a)}<h2>${esc(a.alarmTypeName)}</h2>${decisionBadge(a.decision, a.decisionSource)}${ackBadge(a)}${ticketChip(data.ticket)}</div>
               <div class="rv-loc"><b class="mono">${esc(where(a))}</b>${cameraName(a) ? ` · ${esc(cameraName(a))}` : ''}</div>
               <div class="muted rv-sub"><span class="mono">${esc(a.alarmId)}</span>${a.alarmIdDerived ? ' <span class="prov derived" title="Camview sent this event without an alarm ID; the ID is built from its project, camera, type and first time">ID DERIVED</span>' : ''} ·${fmt.dt(a.firstInstance)}${a.lastInstance !== a.firstInstance ? ` → ${fmt.time(a.lastInstance)}` : ''} (${fmt.rel(a.lastInstance)})${a.totalTimesReported > 1 ? ` · reported <b>${a.totalTimesReported}×</b>` : ''}</div>
             </div>
@@ -441,7 +441,7 @@ export default {
     const paintHeadBadges = () => {
       const h = $('#rv-title', el);
       if (!h) return;
-      h.innerHTML = `${priorityBadge(data.alarm.priority)}<h2>${esc(data.alarm.alarmTypeName)}</h2>${decisionBadge(data.alarm.decision, data.alarm.decisionSource)}${ackBadge(data.alarm)}${ticketChip(data.ticket)}`;
+      h.innerHTML = `${typeBadge(data.alarm)}<h2>${esc(data.alarm.alarmTypeName)}</h2>${decisionBadge(data.alarm.decision, data.alarm.decisionSource)}${ackBadge(data.alarm)}${ticketChip(data.ticket)}`;
     };
 
     const send = async (clientId) => {

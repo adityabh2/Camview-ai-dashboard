@@ -55,7 +55,6 @@ export default {
         <select class="select" id="f-exam" aria-label="Exam"><option value="">All exams</option></select>
         <select class="select" id="f-type" aria-label="Alert type"><option value="">All types</option></select>
         <select class="select" id="f-by" aria-label="Decided by" title="Who decided the alert"><option value="">Decided by anyone</option><option value="team">Decided by our team</option><option value="camview">Status from Camview only</option></select>
-        <select class="select" id="f-priority" aria-label="Priority"><option value="">All priorities</option>${['critical', 'high', 'medium', 'low'].map((p) => `<option value="${p}">${p[0].toUpperCase() + p.slice(1)}</option>`).join('')}</select>
         <select class="select" id="f-centre" aria-label="Centre"><option value="">All centres</option></select>
         <select class="select" id="f-camera" aria-label="Camera"><option value="">All cameras</option></select>
         <div class="seg" role="group" aria-label="Period"><button class="btn sm ${q.range !== 'all' && (q.from || '') === todayStr() && !q.to ? 'primary' : ''}" id="f-today">Today</button><button class="btn sm ${q.range === 'all' ? 'primary' : ''}" id="f-all">All dates</button></div>
@@ -63,7 +62,7 @@ export default {
         <label class="row tight muted" style="font-size:12px">To <input class="input" type="date" id="f-to" value="${esc((q.to || '').slice(0, 10))}"></label>
         <button class="btn sm ghost" id="f-clear">Clear</button>
       </div>
-      <section class="card"><div class="qhead"><span>Priority</span><span>Alert · where</span><span>Exam · client</span><span>Status</span><span>When</span></div>
+      <section class="card"><div class="qhead"><span>Type</span><span>Alert · where</span><span>Exam · client</span><span>Status</span><span>When</span></div>
         <div id="q-rows" class="qrows">${skeleton(8, 40)}</div><div class="card-b" id="q-pager"></div></section>`;
     // a frame whose signed link expired shows a neutral tile instead of a broken image (CSP forbids inline handlers)
     $('#q-rows', el).addEventListener('error', (e) => { if (e.target?.tagName === 'IMG') e.target.closest('.q-thumb')?.classList.add('broken'); }, true);
@@ -118,7 +117,6 @@ export default {
       opts('#f-centre', f.centres.map((c) => [c, c]), q.centre);
       opts('#f-camera', f.cameras.map((c) => [c, c]), q.camera);
       opts('#f-type', (f.types || []).map(([v, l]) => [v, l || `Alert type ${v}`]), q.type);
-      $('#f-priority', el).value = q.priority || '';
       $('#f-by', el).value = q.by || '';
       TABS.forEach(([k]) => { const n = $(`[data-n="${k}"]`, el); if (n) n.textContent = data.counts[k] ?? 0; });
       VIEWS.forEach(([k]) => { const n = $(`[data-vn="${k}"]`, el); if (n) n.textContent = data.views?.[k] ?? 0; });
@@ -126,7 +124,7 @@ export default {
       $('#q-rule', el).textContent = RULES[q.kind] || data.sortRule;
       const fr = Object.values(data.freshness || {});
       const failed = fr.filter((x) => x.lastError);
-      const arrived = data.items.filter((a) => !firstLoad && !seen.has(a.alarmId)).length;
+      const arrived = data.items.filter((a) => !firstLoad && !seen.has(a.alarmId) && a.live).length;   // only alerts that just happened count as new
       $('#q-fresh', el).innerHTML = (failed.length ? `<span class="sla-attention">${icon('alert', 's')} CAMVIEW DATA TEMPORARILY UNAVAILABLE (${failed.length} project${failed.length === 1 ? '' : 's'}) — showing last data</span> · ` : '')
         + `<span title="When this list was last re-read">Updated ${fmt.time(loadedAt?.toISOString())}</span>`;
       rememberQueue(data.items, { ...Object.fromEntries(FILTERS.map((k) => [k, q[k]])), status: q.status });
@@ -138,7 +136,7 @@ export default {
           : empty(q.status === 'pending' ? 'Nothing waiting for a decision' : 'No alerts here',
             q.status === 'pending' ? 'Every alert has been decided. New alerts appear here automatically.' : 'No alerts match these filters.', 'check'));
       } else {
-        morph(rows, data.items.map((a) => alertRow(a, { isNew: !firstLoad && !seen.has(a.alarmId) })).join(''));
+        morph(rows, data.items.map((a) => alertRow(a, { isNew: !firstLoad && !seen.has(a.alarmId) && !!a.live })).join(''));
       }
       if (arrived && q.status === 'pending' && q.page === 1 && document.scrollingElement.scrollTop > 400) {
         toast(`${arrived} new alert${arrived === 1 ? '' : 's'} at the top of the list`);
@@ -178,7 +176,7 @@ export default {
       $$('[data-tab]', el).forEach((x) => { x.classList.toggle('on', x.dataset.tab === status); x.setAttribute('aria-selected', x.dataset.tab === status); });
       set({ view, status });
     }));
-    ['projectId', 'client', 'exam', 'priority', 'centre', 'camera', 'type', 'by'].forEach((k) => $(`#f-${k}`, el).addEventListener('change', (e) => set({ [k]: e.target.value })));
+    ['projectId', 'client', 'exam', 'centre', 'camera', 'type', 'by'].forEach((k) => $(`#f-${k}`, el).addEventListener('change', (e) => set({ [k]: e.target.value })));
     ['from', 'to'].forEach((k) => $(`#f-${k}`, el).addEventListener('change', (e) => set({ [k]: e.target.value, range: '' })));
     $('#f-today', el).addEventListener('click', () => { $('#f-from', el).value = todayStr(); $('#f-to', el).value = ''; set({ from: todayStr(), to: '', range: 'today' }); });
     $('#f-all', el).addEventListener('click', () => { $('#f-from', el).value = ''; $('#f-to', el).value = ''; set({ from: '', to: '', range: 'all' }); });

@@ -1,7 +1,7 @@
 // components/alarms.js — the enterprise alarm table columns and alarm cards.
 // Alarm state, workflow state and client visibility are ALWAYS separate.
 
-import { esc, fmt, icon, priorityBadge, stateBadge, workflowBadge, visBadge, evBadge, contextPath, newBadge, slaBadge } from '../core/ui.js';
+import { esc, fmt, icon, priorityBadge, typeBadge, stateBadge, workflowBadge, visBadge, evBadge, contextPath, newBadge, slaBadge } from '../core/ui.js';
 import { thumb } from './queue.js';
 import { projectCode } from '../core/state.js';
 
@@ -9,7 +9,7 @@ export const investigateHref = (a) => `#/investigations/${encodeURIComponent(a.a
 
 const COLS = {
   thumb: { label: '', render: (a) => `<span class="tcell">${thumb(a)}</span>` },
-  priority: { label: 'Priority', sort: 'priority', render: (a) => `${priorityBadge(a.priority)}${a.flags?.new ? ' ' + newBadge() : ''}` },
+  priority: { label: 'Priority', sort: 'priority', render: (a) => `${typeBadge(a)}${a.flags?.new ? ' ' + newBadge() : ''}` },
   alarm: { label: 'Alarm', sort: 'alarmId', render: (a) => `<div class="cell-2"><a class="mono" href="${investigateHref(a)}">${esc(a.alarmId)}</a><span class="l2">${esc(a.alarmTypeName)}</span></div>` },
   type: { label: 'Type', sort: 'alarmTypeName', render: (a) => esc(a.alarmTypeName) },
   camera: { label: 'Camera', sort: 'cameraCode', render: (a) => `<div class="cell-2"><a class="mono" href="#/cameras/${encodeURIComponent(a.cameraId)}?projectId=${encodeURIComponent(a.projectId)}">${esc(a.cameraCode)}</a><span class="l2">${esc(a.cameraName || '')}</span></div>` },
@@ -42,7 +42,7 @@ export function alarmCard(a, { action = 'investigate' } = {}) {
   const loc = [get('centre'), get('building') && `Building ${get('building')}`, get('floor') && `Floor ${get('floor')}`, get('room') && `Room ${get('room')}`].filter(Boolean).join(' · ');
   return `<article class="acard p-${esc(a.priority)}">
     <div class="acard-frame">${thumb(a)}</div>
-    <div class="top">${priorityBadge(a.priority)}<span class="id">${esc(a.alarmId)}</span>${a.flags?.new ? newBadge() : ''}<span class="grow"></span>${evBadge(a.evidence)}</div>
+    <div class="top">${typeBadge(a)}<span class="id">${esc(a.alarmId)}</span>${a.flags?.new ? newBadge() : ''}<span class="grow"></span>${evBadge(a.evidence)}</div>
     <div style="font-weight:650">${esc(a.alarmTypeName)}</div>
     <div class="ctx-path">${esc(get('project') || projectCode(a.projectId))}${get('tc') ? ` <span class="sep">/</span> ${esc(get('tc'))}` : ''}</div>
     ${loc ? `<div class="dim" style="font-size:12px">${esc(loc)}</div>` : ''}
@@ -54,7 +54,7 @@ export function alarmCard(a, { action = 'investigate' } = {}) {
 
 export function miniRow(a, extra = '') {
   return `<a class="li" href="${investigateHref(a)}">
-    ${thumb(a)}${priorityBadge(a.priority)}
+    ${thumb(a)}${typeBadge(a)}
     <div class="grow"><div class="t1"><span class="mono">${esc(a.alarmId)}</span>${a.flags?.new ? newBadge() : ''}<span class="dim" style="font-weight:500">${esc(a.alarmTypeName)}</span></div>
       <div class="t2">${esc(a.cameraCode)} · ${contextPath((a.context?.path || []).slice(1, 4), { max: 3, unmappedNote: false })} · ${fmt.rel(a.lastInstance)}${a.assignment ? ' · ' + esc(a.assignment) : ''}</div></div>
     <div class="row tight">${extra}${stateBadge(a.lastActionType, a.lastActionLabel)}</div></a>`;

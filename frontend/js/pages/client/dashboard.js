@@ -35,16 +35,16 @@ export default {
           <section class="cp-attn ${waiting ? 'is-open' : 'is-clear'}" aria-live="polite">
             <span class="cp-attn-ic">${icon(waiting ? 'clock' : 'check')}</span>
             <div class="grow">${waiting
-              ? `<b>${fmt.n(waiting)} alert${waiting === 1 ? ' is' : 's are'} waiting for your acknowledgement.</b><div class="muted">Open each one, check the evidence and acknowledge it so the operations team knows you have seen it.</div>`
-              : `<b>You are up to date.</b><div class="muted">Every alert delivered to you has been acknowledged. New ones appear here as they arrive.</div>`}</div>
-            ${waiting ? '<a class="btn primary" href="#/client/alerts?ack=pending">Review alerts</a>' : '<a class="btn" href="#/client/alerts">All alerts</a>'}
+              ? `<b>${fmt.n(waiting)} new alert${waiting === 1 ? '' : 's'} you have not opened yet.</b><div class="muted">Open each one to see the evidence. Opening an alert marks it as read and lets the operations team know.</div>`
+              : `<b>You are up to date.</b><div class="muted">You have opened every alert delivered to you. New ones appear here as they arrive.</div>`}</div>
+            ${waiting ? '<a class="btn primary" href="#/client/alerts?ack=pending">Open new alerts</a>' : '<a class="btn" href="#/client/alerts">All alerts</a>'}
           </section>
 
           <div class="kpis cp-kpis">
             ${kpi({ label: 'Alerts received', value: m.shared, href: '#/client/alerts', icon: 'share' })}
-            ${kpi({ label: 'Waiting for you', title: 'Alerts awaiting your acknowledgement', value: waiting, accent: waiting ? 'warning' : '', href: '#/client/alerts?ack=pending', icon: 'clock' })}
-            ${kpi({ label: 'Acknowledged', value: m.acknowledged, accent: 'good', href: '#/client/alerts?ack=done', icon: 'check' })}
-            ${kpi({ label: 'Critical', value: m.critical, accent: m.critical ? 'critical' : '', href: '#/client/alerts?priority=critical', icon: 'alert' })}
+            ${kpi({ label: 'Not opened yet', title: 'Alerts you have not opened yet', value: waiting, accent: waiting ? 'warning' : '', href: '#/client/alerts?ack=pending', icon: 'clock' })}
+            ${kpi({ label: 'Read', value: m.acknowledged, accent: 'good', href: '#/client/alerts?ack=done', icon: 'check' })}
+            ${kpi({ label: 'Alert types', value: (d.typeDistribution || []).length, href: '#/client/alerts', icon: 'layers' })}
           </div>
 
           <div class="grid g-main">
@@ -54,9 +54,9 @@ export default {
               ${card({ title: 'Your exams', flush: true,
                 body: d.exams?.length ? `<div class="list">${d.exams.map((e) => `<a class="li cp-exam" href="#/client/alerts?exam=${encodeURIComponent(e.id)}">
                     <div class="grow" style="min-width:0"><div class="t1">${esc(e.name)}</div><div class="t2 mono" style="overflow-wrap:anywhere">${esc(e.code)}</div></div>
-                    <div class="cp-exam-n"><b class="num">${fmt.n(e.alerts)}</b><span class="muted">${e.critical ? `${fmt.n(e.critical)} critical` : (e.latest ? fmt.rel(e.latest) : 'alerts')}</span></div></a>`).join('')}</div>`
+                    <div class="cp-exam-n"><b class="num">${fmt.n(e.alerts)}</b><span class="muted">${e.latest ? fmt.rel(e.latest) : 'alerts'}</span></div></a>`).join('')}</div>`
                   : empty('No exams yet', 'Your exams appear here once the operations team maps them to your organisation.', 'calendar') })}
-              ${card({ title: 'By priority', body: bars(d.priorityDistribution.map((x) => ({ ...x, color: PRIORITY_COLORS[x.key], sw: PRIORITY_COLORS[x.key] }))) })}
+              ${card({ title: 'By alert type', body: (d.typeDistribution || []).length ? bars(d.typeDistribution) : '<span class="muted">No alerts yet</span>' })}
               ${card({ title: 'Reports', actions: can('client.report.view') ? '<a class="btn sm" href="#/client/reports">All reports</a>' : '', flush: true,
                 body: d.reports.length ? `<div class="list">${d.reports.map((r) => `<a class="li" href="#/client/reports/${r.id}">${icon('report')}<div class="grow"><div class="t1">${esc(r.title)}</div><div class="t2">${fmt.dt(r.generated_at)}</div></div></a>`).join('')}</div>` : empty('No reports shared yet', 'Reports the operations team shares with you appear here.', 'report') })}
             </div>

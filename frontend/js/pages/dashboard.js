@@ -4,7 +4,7 @@
 import * as api from '../core/api.js';
 import { on, can, session, pref, setPref } from '../core/state.js';
 import { setTitle } from '../core/layout.js';
-import { esc, icon, fmt, kpi, empty, errorBox, skeleton, priorityBadge, morph, dialog, toast, $ } from '../core/ui.js';
+import { esc, icon, fmt, kpi, empty, errorBox, skeleton, priorityBadge, typeBadge, morph, dialog, toast, $ } from '../core/ui.js';
 import { where, cameraName, reviewHref, rememberQueue } from '../components/queue.js';
 import { bar, setSeriesVisible } from '../core/charts.js';
 
@@ -32,7 +32,7 @@ export default {
 
     const card = (a) => `<a class="pcard p-${esc(a.priority || 'unknown')}" href="${reviewHref(a)}" data-key="${esc(a.alarmId)}">
       ${a.imageUrl ? `<div class="pc-frame"><img src="${esc(a.imageUrl)}" alt="" loading="lazy">${a.hasVideo ? `<span class="q-play">${icon('play', 's')}</span>` : ''}</div>` : ''}
-      <div class="row" style="gap:6px">${priorityBadge(a.priority)}<span class="grow"></span><span class="muted num" title="${esc(fmt.dt(a.lastInstance))}">${fmt.rel(a.lastInstance)}</span></div>
+      <div class="row" style="gap:6px">${typeBadge(a)}<span class="grow"></span><span class="muted num" title="${esc(fmt.dt(a.lastInstance))}">${fmt.rel(a.lastInstance)}</span></div>
       <div class="t1">${esc(a.alarmTypeName)}${a.totalTimesReported > 1 ? ` <span class="b outline">${a.totalTimesReported}×</span>` : ''}</div>
       <div class="t2 mono">${icon('camera', 's')} ${esc(where(a))}</div>${cameraName(a) ? `<div class="t2" style="padding-left:18px">${esc(cameraName(a))}</div>` : ''}
       <div class="t2">${icon('report', 's')} ${esc(a.exam?.name || 'No exam mapped')}${a.client ? ` · ${esc(a.client.name)}` : ''}</div>

@@ -58,6 +58,9 @@ export default {
       const canClient = can('report.share') || can('alarm.publish');
       el.innerHTML = `
         <div class="page-head"><div><h2>Reports</h2><p>Pick the exam and who the report is for. Client reports contain only the alerts delivered to that client.</p></div></div>
+        ${meta.auto && (meta.auto.daily || meta.auto.onEnd) ? `<div class="auto-note">${icon('zap')}<div><b>Clients get reports by themselves.</b>
+          ${meta.auto.daily ? `Every day at ${String(meta.auto.hour).padStart(2, '0')}:00 each client receives a report of that day's alerts (only on days with alerts).` : ''}
+          ${meta.auto.onEnd ? 'When an exam ends, each of its clients receives one final report of the whole exam.' : ''}</div></div>` : ''}
         <div class="grid g-side">
           <div class="stack">
             ${meta.canGenerate ? card({ title: `${icon('report')} New report`, body: `
@@ -66,7 +69,7 @@ export default {
                 <div class="field"><label>Period</label><div class="seg">${PERIODS.map(([k, l]) => `<button class="btn sm ${k === period ? 'primary' : ''}" data-period="${k}">${l}</button>`).join('')}</div></div>
               </div>
               <div class="field"><label>For</label>
-                ${canClient ? `<label class="check" style="margin-bottom:6px"><input type="radio" name="rb-aud" value="client" ${audience === 'client' ? 'checked' : ''}> <b>The client</b> — only the alerts delivered to <span id="rb-client-name">${esc(exam()?.clientName || 'the exam\'s client')}</span> (valid results). Can be shared with the client.</label>` : ''}
+                ${canClient ? `<label class="check" style="margin-bottom:6px"><input type="radio" name="rb-aud" value="client" ${audience === 'client' ? 'checked' : ''}> <b>The client</b> — only the alerts delivered to <span id="rb-client-name">${esc(exam()?.clientName || 'the exam\'s client')}</span> (every alert not marked invalid). Can be shared with the client.</label>` : ''}
                 <label class="check"><input type="radio" name="rb-aud" value="team" ${audience === 'team' ? 'checked' : ''}> <b>Our team</b> — every alert of the exam with every verdict (pending, valid, invalid, exception). Internal only.</label></div>
               <div class="row"><span class="grow muted" style="font-size:11.5px">Preview first — nothing is saved until you generate.</span>
                 <button class="btn" id="rb-preview">${icon('eye', 's')} Preview</button><button class="btn primary" id="rb-generate">${icon('report', 's')} Generate</button></div>` })
@@ -74,7 +77,7 @@ export default {
             <div id="rb-out">${preview ? previewHtml(preview) : ''}</div>
           </div>
           ${card({ title: `${icon('history')} Generated reports`, flush: true, body: meta.items.length ? `<div class="list">${meta.items.map((r) => `<div class="li">
-              <span class="b ${r.audience === 'client' ? 'vis-shared' : 'vis-internal'}">${icon(r.audience === 'client' ? 'share' : 'lock')}${r.audience === 'client' ? 'client' : 'team'}</span>
+              <span class="b ${r.audience === 'client' ? 'vis-shared' : 'vis-internal'}">${icon(r.audience === 'client' ? 'share' : 'lock')}${r.audience === 'client' ? 'Client' : 'Team'}</span>${r.generated_by_name === 'Automatic report' ? `<span class="b outline" title="Generated and shared automatically">${icon('zap', 's')}Auto</span>` : ''}
               <div class="grow"><div class="t1"><a href="#/reports/${r.id}">${esc(r.title)}</a></div>
                 <div class="t2">#${r.id} · ${esc(r.generated_by_name || '')} · ${fmt.dt(r.generated_at)}${r.client_name ? ` · ${esc(r.client_name)}` : ''}${r.audience === 'client' ? (r.shared_with_client ? ' · <b>shared</b>' : ' · not shared') : ''}</div></div>
               <div class="row tight">

@@ -74,10 +74,14 @@ def apply():
 
     API_URL = os.environ.get("CAMVIEW_API_URL", "").strip() or DEFAULT_API_URL
     API_KEY = os.environ.get("CAMVIEW_API_KEY", "").strip()
+    global LIVE_MINUTES
+    # An alert counts as LIVE while its latest occurrence is at most this many minutes old (its own time, not ours).
+    LIVE_MINUTES = max(1, int(os.environ.get("CAMVIEW_LIVE_MINUTES", "30") or 30))
     global DELIVER_ALL
-    # all = every detection alert goes to its client the moment Camview sends it (no VALID / INVALID marking);
-    # an administrator revokes single alerts from the client. valid (default) = only operator-VALID alerts.
-    DELIVER_ALL = os.environ.get("CAMVIEW_CLIENT_DELIVERY", "valid").strip().lower() == "all"
+    # all (default) = every detection alert goes to its client the moment Camview sends it; nobody has to mark it
+    # VALID. An administrator marks an alert INVALID (or EXCEPTION) to take it back from the client - it stays in
+    # the system with its decision and audit trail. valid = clients see only alerts an operator marked VALID.
+    DELIVER_ALL = os.environ.get("CAMVIEW_CLIENT_DELIVERY", "all").strip().lower() != "valid"
     global NO_LOGIN
     # 1 = no sign-in screen: every request runs as the built-in Super Admin. ONLY for a single-user install that
     # is reachable from this computer alone (docker-compose.local.yml publishes the port on 127.0.0.1 only).

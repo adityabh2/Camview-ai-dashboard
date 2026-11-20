@@ -78,7 +78,8 @@ def policy():
     if getattr(config, "DELIVER_ALL", False):
         # CAMVIEW_CLIENT_DELIVERY=all: every detection alert reaches its client on arrival; nobody marks
         # VALID / INVALID; an administrator revokes single alerts (Withdraw) and can send them again.
-        p.update(clientsSeeOperatorValidOnly=False, deliveryTrigger="all", autoShareValid=True, manualReview=False,
+        # manualReview stays on: the INVALID / EXCEPTION buttons are how an administrator takes an alert back
+        p.update(clientsSeeOperatorValidOnly=False, deliveryTrigger="all", autoShareValid=True, manualReview=True,
                  deliveryMode="automatic", validSource="either", autoShareHours=None)
         return p
     # nothing reaches a client without an operator's VALID: no delivery on arrival, no Camview-VALID auto-share.
@@ -400,8 +401,8 @@ def get_publication(alarm_id, client_id):
 # CLIENT DATA FIREWALL
 # ---------------------------------------------------------------------------
 
-CLIENT_FIELDS = ("alarmId", "alarmTypeName", "priority", "firstInstance", "lastInstance", "totalTimesReported",
-                 "shiftLabel")
+CLIENT_FIELDS = ("alarmId", "alarmType", "alarmTypeName", "alarmTypeShort", "priority", "firstInstance", "lastInstance",
+                 "totalTimesReported", "shiftLabel")
 
 
 def client_safe_summary(alarm, context_levels=None):
@@ -467,7 +468,7 @@ def build_client_visible_alarm(user, pub_row, live=None, pre=None):
         live = _live_for([pub_row])
     now = live.get(snap.get("alarmId")) if live else None
     if now:
-        for k in ("alarmTypeName", "priority", "lastInstance", "totalTimesReported"):
+        for k in ("alarmTypeName", "alarmTypeShort", "priority", "lastInstance", "totalTimesReported"):
             if now.get(k) is not None:
                 out[k] = now[k]
     ctx = snap.get("context") or {}

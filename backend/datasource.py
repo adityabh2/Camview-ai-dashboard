@@ -164,6 +164,10 @@ def _normalize(raw_items, project_id=None):
         t = types.get(a["alarmType"])
         a["alarmTypeSeverity"] = t["severity"] if t else None
         a["alarmTypeKnown"] = t is not None
+        if not a["alarmTypeKnown"] and (a.get("eventKind") or "alert") == "alert":
+            # a code outside the feature list is shown as "Unknown alert code N", never under a guessed name
+            dq.record("unknown_alert_code", project_id, None,
+                      f"alarmType {a.get('alarmType')} is not in the CamviewAI feature list", it)
         p = prios.get(a["priorityLevel"])
         a["priorityRank"] = p["rank"] if p else 99
         a["priorityConfirmed"] = bool(p and p["confirmed"])
@@ -961,6 +965,11 @@ def enrich(items, new_ids=None, pol=None):
         if a.get("firstInstance") and a.get("lastInstance"):
             span = max(0, (_age_minutes(a["firstInstance"]) or 0) - (_age_minutes(a["lastInstance"]) or 0))
         a["ageMinutes"] = None if age is None else round(age, 1)
+        # LIVE = it happened (last occurrence) within CAMVIEW_LIVE_MINUTES — judged by the alert's own time, never by
+        # when it reached us: an old alert read now (a new project, a late page) is an EARLIER alert, not a live one
+        last_age = _age_minutes(a.get("lastInstance") or a.get("firstInstance"))
+        a["lastAgeMinutes"] = None if last_age is None else round(last_age, 1)
+        a["live"] = last_age is not None and -5 <= last_age <= config.LIVE_MINUTES
         a["spanMinutes"] = None if span is None else round(span, 1)
         pending = a.get("lastActionType") == 0 and a["review"]["status"] in ("unreviewed", "acknowledged")
         # one decision state for the review queue: the operator's decision wins over Camview's

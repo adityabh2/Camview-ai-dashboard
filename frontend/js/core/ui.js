@@ -106,11 +106,31 @@ export const fmt = {
 };
 
 // ------------------------------------------------------------------ badges (icon + label, never color alone)
-const PRIO_ICON = { critical: 'alert', high: 'bang', medium: 'info', low: 'info' };
-export const priorityBadge = (p) => {
-  const k = ['critical', 'high', 'medium', 'low'].includes(p) ? p : 'unknown';
-  return `<span class="b p-${k}" title="Priority">${icon(PRIO_ICON[k] || 'info')}${esc(p || 'unknown')}</span>`;
+// Alerts are classified by their TYPE from the CamviewAI feature list (no critical / high / medium guess):
+// the short code (CHT, MD, TT …) with the full name on hover, and "Live" while the alert's own latest occurrence
+// is at most LIVE_MINUTES old. Same list as backend/alarms.py FEATURES (features.xlsx).
+export const FEATURES = { 1: ['CD', 'Crowd Detection'], 2: ['ZI', 'Zone Intrusion'], 3: ['TP', 'Trunk Placed'], 4: ['TO', 'Trunk Opened'],
+  5: ['VD', 'Vehicle Detection'], 6: ['NP', 'No Person Detection'], 8: ['FD', 'Fire Detection'], 10: ['HMS', 'Health Monitoring'],
+  11: ['CT', 'Camera Tampering'], 12: ['INM', 'Invigilator Not Moving'], 14: ['MD', 'Mobile Detection'], 15: ['MPS', 'Multiple People Standing'],
+  16: ['FM', 'Furniture Movement'], 17: ['CHT', 'Cheating Detection'], 18: ['TT', 'Trunk Tampering'], 20: ['SSH', 'Sack Stack Height'],
+  21: ['SOR', 'Sack Outside ROI'], 22: ['CE', 'Crowd Estimate'], 23: ['SA', 'Suspicious Activity'] };
+const SHORT_BY_NAME = Object.fromEntries(Object.values(FEATURES).map(([s, n]) => [n.toLowerCase(), s]));
+export const LIVE_MINUTES = 30;
+export const isLive = (a) => {
+  if (!a) return false;
+  if (typeof a.live === 'boolean') return a.live;
+  const t = Date.parse(a.lastInstance || a.firstInstance || '');
+  return Number.isFinite(t) && (Date.now() - t) / 60000 <= LIVE_MINUTES && (Date.now() - t) > -300000;
 };
+export const typeShort = (a) => a?.alarmTypeShort || FEATURES[a?.alarmType]?.[0] || SHORT_BY_NAME[String(a?.alarmTypeName || '').toLowerCase()] || null;
+export const typeBadge = (a) => {
+  if (!a) return '';
+  const short = typeShort(a);
+  const name = a.alarmTypeName || FEATURES[a.alarmType]?.[1] || 'Unknown alert code';
+  return `<span class="b type-b ${short ? '' : 'type-unknown'}" title="${esc(name)}">${esc(short || '?')}</span>${isLive(a) ? '<span class="b live-b" title="Happened in the last 30 minutes">Live</span>' : ''}`;
+};
+// kept for old callers: priority is no longer shown anywhere
+export const priorityBadge = () => '';
 const STATE_ICON = { 0: 'clock', 1: 'check', 2: 'x', 3: 'bang' };
 const STATE_LABEL = { 0: 'Pending', 1: 'Valid', 2: 'Invalid', 3: 'Exception' };
 export const stateBadge = (lat, label) => lat == null

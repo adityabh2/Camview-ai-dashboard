@@ -74,6 +74,23 @@ def _unmonitor(ids):
     datasource.ignore_auto(ids)          # auto-discovery never brings them back by itself
 
 
+def _dates(projects):
+    """{projectId: {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}} from the Project Lookup answer (when set)."""
+    out = {}
+    for p in projects:
+        s, e = (str(p.get("startDate") or "")[:10] or None), (str(p.get("endDate") or "")[:10] or None)
+        if s or e:
+            out[str(p["projectId"])] = {"start": s, "end": e}
+    return out
+
+
+def end_date(code):
+    """The day the code's exam ends: the latest end date of its projects (None when Camview has none)."""
+    e = _load().get(str(code or "").strip()) or {}
+    ends = [d.get("end") for d in (e.get("dates") or {}).values() if d.get("end")]
+    return max(ends) if ends else None
+
+
 def register(code, user=None):
     """Looks the code up in Camview and registers it. Raises ApiError when nothing carries the code."""
     from camview_client import ApiError, lookup_projects
@@ -84,11 +101,13 @@ def register(code, user=None):
                                     "(it is the client project id set on the project in Camview).", 404)
     ids = [str(p["projectId"]) for p in projects]
     names = {str(p["projectId"]): p.get("name") for p in projects}
+    dates = _dates(projects)
     with _lock:
         reg = _load()
         before = reg.get(code, {})
         reg[code] = {"projectIds": sorted(set(ids) | set(before.get("projectIds", [])), key=int),
                      "names": {**before.get("names", {}), **{k: v for k, v in names.items() if v}},
+                     "dates": {**before.get("dates", {}), **dates},
                      "source": "lookup", "addedAt": before.get("addedAt") or _now(), "resolvedAt": _now(), "error": None}
         _save(reg)
     _monitor(ids, code, names)
@@ -146,6 +165,7 @@ def refresh(force=False):
                 reg[code].update(projectIds=sorted(set(reg[code].get("projectIds", [])) | set(ids), key=int),
                                  resolvedAt=_now(), error=None)
                 reg[code]["names"] = {**reg[code].get("names", {}), **{k: v for k, v in names.items() if v}}
+                reg[code]["dates"] = {**reg[code].get("dates", {}), **_dates(projects)}
                 _save(reg)
             if new:
                 _monitor(new, code, names)

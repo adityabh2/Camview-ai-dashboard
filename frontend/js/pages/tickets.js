@@ -6,7 +6,7 @@
 import * as api from '../core/api.js';
 import { on } from '../core/state.js';
 import { setTitle } from '../core/layout.js';
-import { esc, icon, fmt, table, pager, errorBox, skeleton, empty, toast, confirmDialog, dialog, priorityBadge, delegate, $, $$ } from '../core/ui.js';
+import { esc, icon, fmt, table, pager, errorBox, skeleton, empty, toast, confirmDialog, dialog, priorityBadge, typeBadge, delegate, $, $$ } from '../core/ui.js';
 import { deliveryBadge, reviewHref, labelFromContext } from '../components/queue.js';
 import { mountEvidence } from '../components/player.js';
 
@@ -33,7 +33,7 @@ async function openTicket(id, onClose) {
     d.el.querySelector('.d-b').innerHTML = `
       <div class="row" style="margin-bottom:10px;gap:8px;flex-wrap:wrap">
         <span class="row tight"><span class="dot ${live ? esc(f?.state || 'live') : 'delayed'}"></span>${live ? `Live from Camview · updated ${fmt.rel(f?.lastSuccessAt)}` : 'Saved copy — this alert is no longer in Camview’s list'}</span>
-        ${priorityBadge(a.priority)}<span class="b">${esc(a.lastActionLabel || '—')} in Camview</span>
+        ${typeBadge(a)}<span class="b">${esc(a.lastActionLabel || '—')} in Camview</span>
         ${deliveryBadge(t.status === 'cancelled' ? 'withdrawn' : t.deliveryStatus)}
         <span class="grow"></span><a class="btn sm" href="${reviewHref(a)}">${icon('external', 's')} Open alert workspace</a>
       </div>
@@ -116,7 +116,7 @@ export default {
           { label: 'Evidence', render: preview },
           { label: 'Ticket', render: (t) => `<div class="cell-2"><b class="mono">${esc(t.ref)}</b><span class="l2">${t.status === 'cancelled' ? '<span class="sla-attention">cancelled</span>' : fmt.rel(t.createdAt)}</span></div>` },
           { label: 'Alert', render: (t) => `<div class="cell-2"><a href="${reviewHref({ alarmId: t.alarmId, projectId: t.projectId })}" title="${esc(t.alarmId)}">${esc(t.snapshot.alarmTypeName || t.alarmId)}</a><span class="l2 mono">${esc(labelFromContext(t.snapshot.context, t.projectId, t.snapshot.cameraId))}</span>${t.live?.source === 'live' ? `<span class="l2">Camview: <b>${esc(t.live.lastActionLabel || '—')}</b> · last seen ${fmt.rel(t.live.lastInstance)} · ${esc(t.live.totalTimesReported || 1)}×</span>` : ''}</div>` },
-          { label: 'Priority', render: (t) => priorityBadge(t.live?.priority || t.snapshot.priority) },
+          { label: 'Priority', render: (t) => typeBadge(t.live || t.snapshot) },
           { label: 'Exam', render: (t) => esc(t.examName || '—') },
           { label: 'Client', render: (t) => esc(t.clientName || (t.snapshot.clients || []).map((c) => c.name).join(', ') || '—') },
           { label: 'Validated', render: (t) => `<div class="cell-2"><span>${esc(t.validatedBy || '—')}</span><span class="l2">${fmt.dt(t.validatedAt)}</span></div>` },

@@ -8,7 +8,7 @@ import * as api from '../core/api.js';
 import { can, currentProject, projectCode } from '../core/state.js';
 import { setTitle } from '../core/layout.js';
 import { esc, icon, fmt, card, empty, errorBox, skeleton, toast, dialog, confirmDialog, delegate, prov, lifecycle,
-  priorityBadge, stateBadge, workflowBadge, visBadge, reviewBadge, contextPath, slaBadge, alertItem, why, $, $$ } from '../core/ui.js';
+  priorityBadge, typeBadge, stateBadge, workflowBadge, visBadge, reviewBadge, contextPath, slaBadge, alertItem, why, $, $$ } from '../core/ui.js';
 import { watchButton } from './camera.js';
 import { gallery, bindGallery } from '../components/evidence.js';
 import { requestShare, approveShare, publishFlow, withdrawFlow } from '../components/sharing.js';
@@ -94,7 +94,7 @@ export default {
             <button class="btn icon" id="back" aria-label="Back">${icon('left')}</button>
             <div><div class="muted" style="font-size:10.5px;letter-spacing:.14em;font-weight:800">INVESTIGATION</div>
               <h2 class="mono" style="font-size:20px">${esc(a.alarmId)}</h2>
-              <div class="row" style="margin-top:4px">${priorityBadge(a.priority)}${stateBadge(a.lastActionType, a.lastActionLabel)}${workflowBadge(a.workflowState, a.workflowLabel)}${visBadge(a.visibility?.state, a.visibility?.label, a.visibility?.acknowledged)}
+              <div class="row" style="margin-top:4px">${typeBadge(a)}${stateBadge(a.lastActionType, a.lastActionLabel)}${workflowBadge(a.workflowState, a.workflowLabel)}${visBadge(a.visibility?.state, a.visibility?.label, a.visibility?.acknowledged)}
                 <span class="dim">${esc(a.alarmTypeName)}</span><span class="muted">·</span><a class="mono" href="#/cameras/${encodeURIComponent(a.cameraId)}?projectId=${a.projectId}">${esc(a.cameraCode)}</a><span class="muted">·</span><span class="num dim">${fmt.dt(a.firstInstance)}</span></div></div>
           </div>
           <div class="row">
@@ -119,7 +119,7 @@ export default {
       const summary = card({ title: `${icon('info')} Alarm summary`, body: `<dl class="kv">
         ${row('Alarm ID', `<span class="mono">${esc(a.alarmId)}</span>`)}
         ${row('Alarm type', `${esc(a.alarmTypeName)} <span class="muted">(type ${esc(a.alarmType)})</span>`, a.alarmTypeKnown ? 'direct' : 'derived')}
-        ${row('Priority', `${priorityBadge(a.priority)} <span class="muted">(value ${esc(a.priorityLevel)}${a.priorityConfirmed ? '' : ' · label not confirmed'})</span>`)}
+        ${row('Priority', `${typeBadge(a)} <span class="muted">(value ${esc(a.priorityLevel)}${a.priorityConfirmed ? '' : ' · label not confirmed'})</span>`)}
         ${row('Alarm state', `${esc(a.alarmState ?? '—')}`)}
         ${row('Last action', stateBadge(a.lastActionType, a.lastActionLabel))}
         ${row('First instance', `<span class="num">${fmt.dt(a.firstInstance)}</span>`)}
@@ -178,7 +178,7 @@ export default {
       const occurrences = card({ title: `${icon('layers')} Occurrences`, actions: prov('derived'), body: occ });
 
       const related = card({ title: `${icon('share')} Related activity`, sub: 'Every relationship explains itself', flush: true,
-        body: (d.related || []).length ? `<div class="list">${d.related.map((r) => `<a class="li" href="${investigateHref(r.alarm)}">${priorityBadge(r.alarm.priority)}
+        body: (d.related || []).length ? `<div class="list">${d.related.map((r) => `<a class="li" href="${investigateHref(r.alarm)}">${typeBadge(r.alarm)}
           <div class="grow"><div class="t1"><span class="mono">${esc(r.alarm.alarmId)}</span><span class="dim" style="font-weight:500">${esc(r.alarm.alarmTypeName)}</span></div>
           <div class="t2">${r.reasons.map(esc).join(' · ')}</div></div>${stateBadge(r.alarm.lastActionType, r.alarm.lastActionLabel)}</a>`).join('')}</div>`
           : empty('No related activity', 'No alarms from the same camera (24 h) or the same room/centre (1 h) in the monitored window.') });
