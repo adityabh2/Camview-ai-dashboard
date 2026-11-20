@@ -129,7 +129,12 @@ def acknowledge(alarm_id):
     user = _user()
     r, _ = _pub_row(user, alarm_id)
     if r["acknowledged_at"]:
-        raise ApiError("conflict", "Already acknowledged.", 409)
+        # opening the alert already acknowledged it; pressing Acknowledge afterwards keeps that, and a comment is kept
+        comment = str(body().get("comment") or "").strip()[:2000] or None
+        if comment:
+            db.execute("UPDATE publications SET ack_comment=?, updated_at=? WHERE alarm_id=? AND client_id=?",
+                       (comment, db.now_iso(), alarm_id, user["clientId"]))
+        return jsonify(_pub_row(user, alarm_id)[1])
     comment = str(body().get("comment") or "").strip()[:2000] or None
     now = db.now_iso()
     db.execute("UPDATE publications SET acknowledged_by=?, acknowledged_at=?, ack_comment=?, updated_at=? "

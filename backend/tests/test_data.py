@@ -37,14 +37,18 @@ def test_normalize_flattens_documented_shape():
 def test_normalize_handles_missing_fields_and_epoch_times():
     item = {"alarm": {"alarmId": "X", "alarmType": 9, "priority": 7, "firstInstance": 1727172000000}}
     a = alarms.normalize(item)
-    assert a["alarmTypeName"] == "Alert type 9" and a["priority"] == "P7" and a["firstInstance"].endswith("Z")
+    assert a["alarmTypeName"] == "Unknown alert code 9" and a["priority"] == "P7" and a["firstInstance"].endswith("Z")
     assert a["cameraId"] == "" and a["totalTimesReported"] == 1
 
 
 def test_type_and_camera_names_come_from_camview_when_not_in_dictionary():
-    a = alarms.normalize({"alarm": {"alarmId": "A", "alarmType": 14, "alarmTypeName": "TRUCK_TAMPERING", "cameraId": 7},
+    # a code outside the feature list: the name Camview sends is used
+    a = alarms.normalize({"alarm": {"alarmId": "A", "alarmType": 99, "alarmTypeName": "TRUCK_TAMPERING", "cameraId": 7},
                           "camera": {"cameraId": 7, "cameraName": "Gate 2 · Truck bay"}})
     assert a["alarmTypeName"] == "Truck Tampering" and a["cameraName"] == "Gate 2 · Truck bay"
+    # a code in the CamviewAI feature list: the official name, whatever Camview sends
+    f = alarms.normalize({"alarm": {"alarmId": "F", "alarmType": 14, "alarmTypeName": "SOMETHING_ELSE"}})
+    assert f["alarmTypeName"] == "Mobile Detection" and f["alarmTypeShort"] == "MD"
     b = alarms.normalize({"alarm": {"alarmId": "B", "alarmType": 1, "alarmName": "Mobile Detection"}}, {1: "Mobile Phone"})
     assert b["alarmTypeName"] == "Mobile Phone"                     # the admin dictionary wins
 

@@ -28,15 +28,16 @@ def test_queue_spans_all_exams_and_clients(supervisor):
     assert len(q["facets"]["exams"]) == 4
     a = q["items"][0]
     assert a["exam"] and a["client"] and a["context"]["path"]         # resolved automatically, never typed
-    assert "priority" in q["sortRule"]
+    assert "live alerts first" in q["sortRule"]
 
 
-def test_queue_auto_sorting_priority_then_recency(supervisor):
+def test_queue_auto_sorting_live_then_recency(supervisor):
     items = supervisor.get("/api/queue?status=pending&size=200")[1]["items"]
-    ranks = [a["priorityRank"] for a in items]
-    assert ranks == sorted(ranks)
-    same = [a for a in items if a["priorityRank"] == ranks[0]]
-    assert [a["lastInstance"] for a in same] == sorted([a["lastInstance"] for a in same], reverse=True)
+    live = [0 if a.get("live") else 1 for a in items]
+    assert live == sorted(live)                                        # live alerts first
+    for group in (True, False):
+        same = [a for a in items if bool(a.get("live")) == group]
+        assert [a["lastInstance"] for a in same] == sorted([a["lastInstance"] for a in same], reverse=True)
 
 
 def test_queue_filters(supervisor):

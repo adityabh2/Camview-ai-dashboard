@@ -210,8 +210,11 @@ def normalize(item, type_names=None, priority_labels=None, hall_field=None):
         "alarmType": type_id,
         # dictionary (Nomenclature › Dictionary / CAMVIEW_ALARM_TYPE_NAMES) → name sent by Camview → "Alert type N"
         # the feature list (or an administrator's name in the Dictionary) → never a guess from AI labels
-        "alarmTypeName": type_names.get(type_id) or (FEATURES[type_id][1] if type_id in FEATURES else None)
-                         or md_name or unknown_type_name(type_id),
+        # camera online / offline events: their own status ("Camera Offline"); alerts: the administrator's name in
+        # the Dictionary → the CamviewAI feature list → a name Camview sends → "Unknown alert code N" (never a guess)
+        "alarmTypeName": (md_name if kind == "camera_status" and md_name else None) or type_names.get(type_id)
+                         or (FEATURES[type_id][1] if type_id in FEATURES else None)
+                         or pretty_name(_first(alarm, TYPE_NAME_KEYS) or "") or md_name or unknown_type_name(type_id),
         "alarmTypeShort": type_short(type_id),
         "alarmTypeKnown": type_id in FEATURES or type_id in type_names,
         "alarmState": alarm.get("alarmState"),

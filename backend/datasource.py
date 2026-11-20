@@ -123,6 +123,7 @@ def _normalize(raw_items, project_id=None):
     names = {k: v["name"] for k, v in types.items()}
     labels = {k: v["label"] for k, v in prios.items()} or config.PRIORITY_LABELS
     out, seen, skipped, dupes = [], set(), 0, 0
+    unknown_codes = {}                        # alert codes outside the feature list in this read
     for it in raw_items or []:
         if not isinstance(it, dict):
             skipped += 1
@@ -165,9 +166,7 @@ def _normalize(raw_items, project_id=None):
         a["alarmTypeSeverity"] = t["severity"] if t else None
         a["alarmTypeKnown"] = t is not None
         if not a["alarmTypeKnown"] and (a.get("eventKind") or "alert") == "alert":
-            # a code outside the feature list is shown as "Unknown alert code N", never under a guessed name
-            dq.record("unknown_alert_code", project_id, None,
-                      f"alarmType {a.get('alarmType')} is not in the CamviewAI feature list", it)
+            unknown_codes.setdefault(a.get("alarmType"), it)   # recorded once per code below
         p = prios.get(a["priorityLevel"])
         a["priorityRank"] = p["rank"] if p else 99
         a["priorityConfirmed"] = bool(p and p["confirmed"])
@@ -189,6 +188,9 @@ def _normalize(raw_items, project_id=None):
         dq.record("duplicate_record", project_id, None, "same alarmId returned twice in one read (shifting pages)",
                   {"duplicates": dupes})
     _normalize.skipped = skipped + dupes
+    for code, sample in unknown_codes.items():   # a code outside the feature list: "Unknown alert code N"
+        dq.record("unknown_alert_code", project_id, None,
+                  f"alarmType {code} is not in the CamviewAI feature list", sample)
     return out
 
 
