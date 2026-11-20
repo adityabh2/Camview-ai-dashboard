@@ -124,7 +124,7 @@ export default {
           { label: '', render: (t) => t.status !== 'open' ? '' : `<div class="row tight" style="justify-content:flex-end">
               ${data.canSend && ['ready', 'withdrawn', 'failed'].includes(t.deliveryStatus) ? `<button class="btn sm primary" data-send="${t.id}">${icon('share', 's')} Send</button>` : ''}
               ${data.canSend && t.deliveryStatus === 'needs_client' ? `<a class="btn sm" href="${reviewHref({ alarmId: t.alarmId, projectId: t.projectId })}">Choose client</a>` : ''}
-              ${data.canWithdraw && t.deliveryStatus === 'delivered' ? `<button class="btn sm" data-withdraw="${t.id}">Withdraw</button>` : ''}</div>` },
+              ${data.canWithdraw && t.deliveryStatus === 'delivered' ? `<button class="btn sm" data-withdraw="${t.id}">Revoke</button>` : ''}</div>` },
         ],
         rows: data.items,
         emptyHtml: empty('No tickets here', 'Tickets are created automatically when an alert is marked VALID.', 'report'),
@@ -149,7 +149,7 @@ export default {
     ctx.onCleanup(delegate(el, 'click', '[data-withdraw]', async (e, b) => {
       const t = data.items.find((x) => x.id === +b.dataset.withdraw);
       if (!await confirmDialog({ title: 'Withdraw from client?', message: `${esc(t.clientName || 'The client')} will no longer see ${esc(t.ref)}. The ticket stays open and can be sent again.`, confirmLabel: 'Withdraw', danger: true })) return;
-      try { await api.post(`/api/tickets/${t.id}/withdraw`, {}); toast('Withdrawn', 'success'); load(); } catch (err) { toast(err.message, 'error'); }
+      try { await api.post(`/api/tickets/${t.id}/withdraw`, {}); toast('Revoked from the client', 'success'); load(); } catch (err) { toast(err.message, 'error'); }
     }));
     $('#t-sendall', el).addEventListener('click', async () => {
       const ready = data.items.filter((t) => t.deliveryStatus === 'ready' && t.status === 'open');

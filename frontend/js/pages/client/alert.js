@@ -12,7 +12,7 @@ import { ackBadge } from './common.js';
 export default {
   async render(el, ctx) {
     const id = ctx.params.id;
-    setTitle('Shared Alert', `<a href="#/client/alerts">Shared alerts</a> / <span class="mono">${esc(id)}</span>`);
+    setTitle('Alert', `<a href="#/client/alerts">Alerts</a> / <span class="mono">${esc(id)}</span>`);
     el.innerHTML = skeleton(6, 40);
 
     const load = async () => {
@@ -48,8 +48,9 @@ export default {
       el.innerHTML = `
         <div class="page-head" style="align-items:center"><div class="row" style="gap:12px">
           <a class="btn icon" href="#/client/alerts" aria-label="Back">${icon('left')}</a>
-          <div><div class="muted" style="font-size:10.5px;letter-spacing:.14em;font-weight:800">SHARED ALERT</div><h2 class="mono">${esc(a.alarmId)}</h2>
-            <div class="row" style="margin-top:4px">${a.exam ? `<span class="b outline">${esc(a.exam.name)}</span>` : ''}${a.ticketRef ? `<span class="b outline mono">${esc(a.ticketRef)}</span>` : ''}${priorityBadge(a.priority)}<span class="b vis-shared">${icon('check')}${esc(a.status)}</span>${ackBadge(a)}<span class="dim">${esc(a.alarmTypeName)}</span></div></div></div></div>
+          <div><h2>${esc(a.alarmTypeName || 'Alert')}</h2>
+            <div class="muted" style="margin-top:2px">${a.locationLabel ? `<span class="mono">${esc(a.locationLabel)}</span> · ` : ''}raised ${fmt.dt(a.firstInstance)} · <span class="mono">${esc(a.alarmId)}</span></div>
+            <div class="row" style="margin-top:8px">${priorityBadge(a.priority)}${ackBadge(a)}${a.exam ? `<span class="b outline">${esc(a.exam.name)}</span>` : ''}${a.ticketRef ? `<span class="b outline mono">${esc(a.ticketRef)}</span>` : ''}</div></div></div></div>
         <div class="grid g-side">
           <div class="stack">
             ${card({ title: `${icon('info')} Summary`, body: `<div style="white-space:pre-wrap;font-size:13.5px">${esc(a.summary || 'No summary provided.')}</div>` })}

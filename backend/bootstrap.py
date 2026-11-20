@@ -24,6 +24,9 @@ log = logging.getLogger("camview.bootstrap")
 def run():
     db.DB_PATH = config.db_path()
     db.init_db()
+    if not db.check_integrity():               # after migrations: a damaged database makes /readyz fail, loudly
+        log.error("DATABASE INTEGRITY CHECK FAILED: %s — restore from a backup (README › Backup)",
+                  db.INTEGRITY["detail"])
     import ai
     import geo
     import incidents
@@ -59,16 +62,13 @@ def run():
                          "ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description",
                          (tid, name, "From CAMVIEW_ALARM_TYPE_NAMES"))
     ensure_admin(force=not db.rows("SELECT 1 FROM users LIMIT 1"))
+    import project_codes
+    project_codes.seed_from_config()           # CAMVIEW_PROJECT_CODES joins the project-code registry
     datasource.prune_stale_projects()          # an old exam's auto-built tree never lingers next to the running one
     import tickets
-    import workflow
-    if not db.get_setting("policy_auto_valid_v1"):
-        # one-time switch of existing installs: every VALID alert goes to the client automatically, whether the
-        # team marked it VALID in Camview or here (INVALID / EXCEPTION never go; camera-offline events never do)
-        workflow.set_policy({"clientsSeeOperatorValidOnly": False, "autoShareValid": True,
-                             "deliveryTrigger": "valid", "deliveryMode": "automatic"}, None)
-        db.set_setting("policy_auto_valid_v1", db.now_iso())
-    tickets.enforce_operator_valid_only()      # only when the stricter operator-VALID rule is switched on
+    # core rule: clients see only operator-VALID alerts. Anything an older version delivered on Camview's VALID
+    # or on arrival is withdrawn (quietly, once, audited as delivery.policy_enforced).
+    tickets.enforce_operator_valid_only()
     try:
         tickets.deliver_pending_valid()        # operator-VALID alerts that were waiting for a client mapping
     except Exception:
@@ -97,8 +97,18 @@ def ensure_admin(force=False):
                (uid, email, generate_password_hash(password), db.now_iso()))
     db.execute("INSERT OR IGNORE INTO user_scopes (user_id, scope_type, scope_value) VALUES (?, 'global', '*')", (uid,))
     db.audit("user.bootstrap", None, "user", uid, None, email)
+    if config.NO_LOGIN:
+        log.info("No-login mode (CAMVIEW_NO_LOGIN=1): the app runs as %s without a sign-in screen", email)
+        return
     if not os.environ.get("CAMVIEW_ADMIN_PASSWORD"):
-        log.warning("=" * 70)
-        log.warning("Super Admin created  %s  /  %s", email, password)
-        log.warning("Sign in and change this password (profile menu > Change password).")
-        log.warning("=" * 70)
+        # never written to the log (logs are shipped and kept): a file only the server's owner can read
+        path = os.path.join(os.path.dirname(os.path.abspath(db.DB_PATH)), "initial-admin-password.txt")
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(f"{email}\n{password}\n")
+            log.warning("Super Admin %s created. Its one-time password is in %s — sign in, change it, delete the file.",
+                        email, path)
+        except OSError:
+            log.error("Super Admin %s created but its password could not be saved. Set CAMVIEW_ADMIN_PASSWORD and "
+                      "reset the password from another administrator account.", email)

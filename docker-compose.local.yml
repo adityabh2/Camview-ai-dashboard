@@ -1,0 +1,60 @@
+# CAMVIEW Command Center on THIS computer, in Docker.
+#
+#   Start:   start-local.bat           (or: docker compose -f docker-compose.local.yml up -d --build)
+#   Admin:   http://localhost:5000     (no sign-in, this computer only)
+#   Clients: http://<this PC's IP>:5001  (sign-in required, client accounts only)
+#   Stop:    stop-local.bat            (or: docker compose -f docker-compose.local.yml down)
+#   Reset:   reset-local-data.bat      (deletes the local database; Camview data is read again)
+#
+# Settings (API key, project, ...) come from the .env file next to this file.
+# The admin port is published on 127.0.0.1 ONLY: with sign-in switched off there, nobody else can reach it.
+# For a server where everyone signs in, use docker-compose.yml instead.
+name: camview-local
+
+services:
+  camview:
+    build: .
+    image: camview-command-center:local
+    container_name: camview-local
+    # Two doors, one app:
+    #   5000 = administrators, no sign-in, reachable from THIS computer only (127.0.0.1)
+    #   5001 = client portal, sign-in required, client accounts only, reachable from the network
+    command: ["sh", "-c", "gunicorn -w 1 --threads ${CAMVIEW_THREADS:-48} --timeout 60 --keep-alive 5 -b 0.0.0.0:5000 -b 0.0.0.0:5001 app:app"]
+    ports:
+      - "127.0.0.1:5000:5000"
+      - "${CAMVIEW_PORTAL_BIND:-0.0.0.0}:5001:5001"
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - CAMVIEW_MODE=${CAMVIEW_MODE:-live}
+      - CAMVIEW_NO_LOGIN=1
+      - CAMVIEW_NO_LOGIN_PORTS=5000
+      - CAMVIEW_CLIENT_ONLY_PORTS=5001
+      # sign-in is off and the port is local-only, so the Connection settings may be saved from the browser
+      - CAMVIEW_ALLOW_REMOTE_SETUP=1
+      - CAMVIEW_ADMIN_EMAIL=${CAMVIEW_ADMIN_EMAIL:-admin}
+      - CAMVIEW_DEMO_USERS=0
+      # code first: data comes from the project codes you register on the dashboard, not from scanning
+      # numeric Camview project ids. Set to 1 to also monitor any running project automatically.
+      - CAMVIEW_AUTO_DISCOVER=${CAMVIEW_AUTO_DISCOVER:-0}
+      - CAMVIEW_API_URL=${CAMVIEW_API_URL:-https://default.prod.api.camviewai.com/alarms/listAlarms}
+      - CAMVIEW_API_KEY=${CAMVIEW_API_KEY:-}
+      - CAMVIEW_PROJECT_API_KEY=${CAMVIEW_PROJECT_API_KEY:-}
+      - CAMVIEW_PROJECT_ID=${CAMVIEW_PROJECT_ID:-}
+      - CAMVIEW_PROJECT_CODES=${CAMVIEW_PROJECT_CODES:-}
+      - CAMVIEW_DELIVERY_TRIGGER=valid
+      # all = every alert goes to its client on arrival (nobody marks VALID / INVALID); an administrator revokes
+      # single alerts with "Revoke from client". valid = only alerts an operator marked VALID.
+      - CAMVIEW_CLIENT_DELIVERY=${CAMVIEW_CLIENT_DELIVERY:-all}
+      - CAMVIEW_CACHE_SECONDS=${CAMVIEW_CACHE_SECONDS:-30}
+      - CAMVIEW_GEOCODE=${CAMVIEW_GEOCODE:-0}
+      - PORT=5000
+      - LOG_LEVEL=INFO
+      - CAMVIEW_DB_PATH=/app/backend/data/camview.db
+      - CAMVIEW_DEMO_DB_PATH=/app/backend/data/camview-demo.db
+    volumes:
+      - camview_local_data:/app/backend/data
+
+volumes:
+  camview_local_data:

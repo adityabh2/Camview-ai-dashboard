@@ -11,12 +11,112 @@ lazily (only when an alert is opened), cached per file, never on the list refres
 import logging
 import threading
 import time
-from datetime import datetime, timezone
-from urllib.parse import urlsplit
+from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 
 log = logging.getLogger("camview.media")
+
+# ---------------------------------------------------------------------------
+# Evidence links: resolved when asked for, never trusted forever
+# ---------------------------------------------------------------------------
+# Camview's media links are signed and expire (7 days). A record read today from the store may carry a link
+# that no longer works, so the browser never gets a stored link directly: it asks /api/media/<alarm>/<kind>/<i>
+# and the server resolves the freshest link (live feed → store), notices an expired signature, re-reads the
+# project once to get a newly signed link, and either redirects to it or streams it (Range requests pass through).
+# A missing / expired / slow file is a clean 404 / 410 / 504 — the page shows IMAGE / VIDEO UNAVAILABLE.
+
+EXPIRY_MARGIN = 60          # seconds: a link this close to expiry is treated as expired
+_refreshed = {}             # project id -> epoch of the last "links expired" re-read (at most one a minute)
+
+
+def expires_at(url):
+    """When a signed link stops working (UTC datetime), or None when it carries no known expiry.
+    Understands S3 SigV4 (X-Amz-Date + X-Amz-Expires), S3 SigV2 / CloudFront (Expires=epoch) and GCS."""
+    try:
+        q = {k.lower(): v[0] for k, v in parse_qs(urlsplit(url).query).items()}
+    except (TypeError, ValueError):
+        return None
+    for date_k, exp_k in (("x-amz-date", "x-amz-expires"), ("x-goog-date", "x-goog-expires")):
+        if date_k in q and exp_k in q:
+            try:
+                start = datetime.strptime(q[date_k], "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+                return start + timedelta(seconds=int(q[exp_k]))
+            except ValueError:
+                return None
+    if "expires" in q and q["expires"].isdigit():
+        return datetime.fromtimestamp(int(q["expires"]), tz=timezone.utc)
+    return None
+
+
+def is_expired(url, margin=EXPIRY_MARGIN):
+    exp = expires_at(url) if isinstance(url, str) else None
+    return bool(exp and exp <= datetime.now(timezone.utc) + timedelta(seconds=margin))
+
+
+def pick(record, kind, index):
+    if not record:
+        return None
+    if kind == "video":
+        return record.get("videoUrl") if index == 0 else None
+    if kind == "image":
+        urls = record.get("imageUrls") or []
+        return urls[index] if 0 <= index < len(urls) else None
+    return None
+
+
+def resolve(alarm_id, kind, index, project_id=None, force_fresh=False):
+    """(url, state): the freshest link for one evidence item. state = ok | expired | missing.
+    With `force_fresh` (the upstream refused the link) the project is re-read once to get a newly signed link."""
+    import alert_service
+    import datasource
+    rec, _ = alert_service.media_record(alarm_id, project_id)
+    url = pick(rec, kind, index)
+    if not url:
+        return None, "missing"
+    if url.startswith("/demo-evidence/"):
+        return url, "ok"                                  # same-origin demo evidence
+    if not url.lower().startswith(("https://", "http://")):
+        return None, "missing"                            # never follow anything else (no loops, no local paths)
+    pid = str((rec or {}).get("projectId") or project_id or "")
+    if (force_fresh or is_expired(url)) and pid:
+        if time.time() - _refreshed.get(pid, 0) > 60:
+            _refreshed[pid] = time.time()
+            datasource.refresh(pid, force=True)           # Camview signs every link anew on each read
+            rec, _ = alert_service.media_record(alarm_id, pid)
+            fresh = pick(rec, kind, index)
+            if fresh and fresh != url:
+                return fresh, "ok"
+        return url, "expired"
+    return url, "ok"
+
+
+def open_stream(url, range_header=None, timeout=15):
+    """GETs a media file for streaming. Returns (response, None) or (None, (code, message, status))."""
+    try:
+        upstream = requests.get(url, stream=True, timeout=timeout,
+                                headers={"Range": range_header} if range_header else {})
+    except requests.Timeout:
+        return None, ("media_timeout", "The evidence file did not arrive in time.", 504)
+    except requests.RequestException:
+        return None, ("media_unavailable", "The evidence service could not be reached.", 502)
+    if upstream.status_code in (403, 410):
+        upstream.close()
+        return None, ("media_expired", "The link to this evidence file has expired.", 410)
+    if upstream.status_code == 404:
+        upstream.close()
+        return None, ("media_not_found", "This evidence file does not exist (anymore).", 404)
+    if upstream.status_code == 416:
+        upstream.close()
+        return None, ("media_range", "Requested range not satisfiable.", 416)
+    if upstream.status_code >= 400:
+        upstream.close()
+        return None, ("media_unavailable", "The evidence file could not be loaded right now.", 502)
+    return upstream, None
+
+
+STREAM_HEADERS = ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Last-Modified", "ETag")
 
 _cache = {}
 _lock = threading.Lock()

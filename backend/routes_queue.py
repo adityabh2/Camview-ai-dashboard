@@ -4,27 +4,31 @@ routes_queue.py — the automated alert-review product surface.
   GET  /api/queue                 one queue across every exam/project the user may see
   GET  /api/queue/summary         "what needs my decision right now?"
   GET  /api/queue/<id>            everything needed to review one alert (evidence first)
-  POST /api/queue/<id>/decide     VALID | INVALID | EXCEPTION  (the only human action)
+  POST /api/queue/<id>/acknowledge  "I have this alert" — who / when; not a decision
+  POST /api/queue/<id>/decide     VALID | INVALID | EXCEPTION  (the decision; acknowledges implicitly)
   GET  /api/tickets               tickets created automatically from VALID decisions
   POST /api/tickets/<id>/send     controlled delivery: one click
   POST /api/tickets/<id>/withdraw
   GET|POST|PUT /api/exams         exam ↔ client ↔ project mapping (administration)
 """
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request
 
+import alert_service
 import datasource
 import db
 import exams
 import health as health_mod
 import media
+import obs
 import rbac
 import tickets
 import workflow
 from camview_client import ApiError
-from routes_common import body, paginate, project_label
+from routes_common import body, paginate, project_label, serve_media
 from routes_ops import slim
 
 bp = Blueprint("queue", __name__)
@@ -49,9 +53,18 @@ def _tz():
         return timezone.utc
 
 
-def _all_alarms(user, project=None):
-    """Merged, scope-filtered working sets of every project the user may see."""
-    pids = [str(project)] if project else datasource.allowed_projects(user)
+def _all_alarms(user, project=None, code=None):
+    """Merged, scope-filtered working sets of every project the user may see — or only the projects behind one
+    registered project code (`code`, e.g. RAILTEL-J&K/JKSSB-AAE-FOC/151126/CCTV-AI/IIL)."""
+    if code:
+        import project_codes
+        allowed = set(datasource.allowed_projects(user))
+        ids = project_codes.project_ids(code)
+        if not ids:
+            raise ApiError("not_found", "This project code is not registered. Add it on the dashboard first.", 404)
+        pids = [p for p in ids if p in allowed]
+    else:
+        pids = [str(project)] if project else datasource.allowed_projects(user)
     items, freshness = [], {}
     for pid in pids:
         if not rbac.project_allowed(user, pid):
@@ -96,6 +109,8 @@ def _filter(items, f):
             continue
         if f.get("city") and (a.get("cameraCity") or "").strip().lower() != f["city"].strip().lower():
             continue
+        if f.get("view") and not _in_view(a, f["view"]):
+            continue
         if f.get("from") and (a.get("lastInstance") or "") < f["from"]:
             continue
         if f.get("to") and (a.get("firstInstance") or "") > f["to"]:
@@ -109,10 +124,33 @@ def _filter(items, f):
     return out
 
 
+# Operational views across the decision tabs: what needs a human, what is on its way to a client, what is a
+# camera / recording problem. Each is a filter over the same canonical records - never a separate list.
+VIEWS = ("needs_review", "unacknowledged", "client_eligible", "client_shared", "camera_issues", "recording_issues")
+
+
+def _in_view(a, view):
+    if view == "needs_review":
+        return a["decision"] == "pending" and (a.get("eventKind") or "alert") == "alert"
+    if view == "unacknowledged":                      # pending alerts nobody has picked up (ACKNOWLEDGE step)
+        return bool((a.get("flags") or {}).get("unacknowledged"))
+    if view == "client_eligible":
+        return alert_service.readiness(a)["state"] == "ready"
+    if view == "client_shared":
+        return alert_service.readiness(a)["state"] == "visible"
+    cond = set((a.get("health") or {}).get("conditions") or [])
+    if view == "camera_issues":
+        return bool(cond & {"CAMERA_OFFLINE", "FRAME_SYNC_FAILED", "STREAM_UNAVAILABLE"})
+    if view == "recording_issues":
+        return "RECORDING_NOT_DETECTED" in cond
+    raise ApiError("bad_request", f"view must be one of {', '.join(VIEWS)}.", 400)
+
+
 def _counts(items):
-    c = {"all": len(items), "pending": 0, "valid": 0, "invalid": 0, "exception": 0}
+    c = {"all": len(items), "pending": 0, "valid": 0, "invalid": 0, "exception": 0, "unacknowledged": 0}
     for a in items:
         c[a["decision"]] = c.get(a["decision"], 0) + 1
+        c["unacknowledged"] += bool((a.get("flags") or {}).get("unacknowledged"))
     return c
 
 
@@ -120,12 +158,17 @@ def _counts(items):
 @rbac.internal("live.view", "alarm.view", any_of=True)
 def queue():
     user = _user()
-    items, freshness = _all_alarms(user, request.args.get("projectId"))
+    items, freshness = _all_alarms(user, request.args.get("projectId"), request.args.get("code"))
     f = {k: request.args.get(k) for k in ("status", "client", "exam", "priority", "centre", "camera", "search", "from", "to",
-                                          "kind", "type", "city", "by")}
+                                          "kind", "type", "city", "by", "view")}
     f["status"] = f["status"] or "pending"
     f["kind"] = KINDS.get(f["kind"] or "alert", "alert")
-    both = _filter(items, {**f, "status": "all", "kind": "all", "by": None})
+    if f.get("view") and f["view"] not in VIEWS:
+        raise ApiError("bad_request", f"view must be one of {', '.join(VIEWS)}.", 400)
+    both = _filter(items, {**f, "status": "all", "kind": "all", "by": None, "view": None})
+    views = {v: sum(1 for a in both if _in_view(a, v)) for v in VIEWS}
+    if f.get("view"):
+        both = [a for a in both if _in_view(a, f["view"])]
     base = [a for a in both if f["kind"] == "all" or (a.get("eventKind") or "alert") == f["kind"]]
     if f.get("by"):                                   # "decided by" narrows the tab counts too
         base = _filter(base, {"status": "all", "kind": "all", "by": f["by"]})
@@ -134,6 +177,7 @@ def queue():
     page = paginate(filtered, request.args.get("page"), request.args.get("size") or 50)
     page["items"] = [slim(a) for a in page["items"]]          # slim carries imageUrl / hasVideo for evidence.view
     page["counts"] = _counts(base)
+    page["views"] = views
     page["kind"] = f["kind"]
     page["kinds"] = {"alert": sum(1 for a in both if (a.get("eventKind") or "alert") == "alert"),
                      "camera_status": sum(1 for a in both if a.get("eventKind") == "camera_status")}
@@ -157,7 +201,7 @@ def queue():
 @rbac.internal("live.view", "alarm.view", any_of=True)
 def queue_summary():
     user = _user()
-    items, freshness = _all_alarms(user, request.args.get("projectId"))
+    items, freshness = _all_alarms(user, request.args.get("projectId"), request.args.get("code"))
     cam_events = [a for a in items if a.get("eventKind") == "camera_status"]
     items = [a for a in items if a.get("eventKind") != "camera_status"]        # KPIs count alerts, not status events
     tz = _tz()
@@ -186,7 +230,8 @@ def queue_summary():
     exams_seen = {}
     for a in items:
         if a.get("exam"):
-            e = exams_seen.setdefault(a["exam"]["id"], {**a["exam"], "clients": a["clients"], "pending": 0, "total": 0})
+            e = exams_seen.setdefault(a["exam"]["id"], {**a["exam"], "phase": exams.phase(a["exam"]),   # phase NOW
+                                                        "clients": a["clients"], "pending": 0, "total": 0})
             e["total"] += 1
             e["pending"] += a["decision"] == "pending"
     counts = _counts(items)
@@ -229,6 +274,9 @@ def queue_summary():
                "offline": sum(1 for h in cams.values() if h["camera"]["state"] == "offline"),
                "online": sum(1 for h in cams.values() if h["camera"]["state"] == "online"),
                "syncFailed": sum(1 for h in cams.values() if "FRAME_SYNC_FAILED" in h["conditions"]),
+               # recording facts exist only when a real source reports them (Camview never does)
+               "recordingReporting": sum(1 for h in cams.values() if h["recording"]["state"] != "unknown"),
+               "notRecording": sum(1 for h in cams.values() if h["recording"]["state"] == "not_recording"),
                "source": health_mod.source_mode(),
                "events": len(cam_events), "eventsPending": sum(1 for a in cam_events if a["decision"] == "pending"),
                "latestEventAt": max((a.get("lastInstance") or "" for a in cam_events), default=None) or None}
@@ -249,6 +297,7 @@ def queue_summary():
         "kpis": {
             "newAlerts": sum(1 for a in items if (a.get("firstInstance") or "") >= hour_ago),
             "pending": len(pending),
+            "unacknowledged": sum(1 for a in pending if (a.get("flags") or {}).get("unacknowledged")),
             "validToday": sum(1 for a in items if decided_today(a, "valid")),
             "invalidToday": sum(1 for a in items if decided_today(a, "invalid")),
             "exceptions": sum(1 for a in items if a["decision"] == "exception" and a["decisionSource"] == "operator"),
@@ -270,8 +319,11 @@ def review_payload(alarm_id):
         raise ApiError("not_found", "Alert not available.", 404)
     ev = _evidence(user, a)
     p = user["permissions"]
+    siblings, _ = datasource.working_set(user, str(a.get("projectId")))
     return jsonify({
-        "alarm": a, "evidence": ev, "ticket": tickets.for_alarm(alarm_id),
+        "alarm": alert_service.public(a, user), "alert": a["alert"], "evidence": ev, "ticket": tickets.for_alarm(alarm_id),
+        # the event story: related alerts on this camera, the idempotent event group, why this alert (facts only)
+        "story": alert_service.story(a, siblings),
         # what the alert itself detected (labels + boxes from Camview's metadata file), when there is a frame
         "detections": media.detections(a.get("metadataUrl")) if ev and a.get("metadataUrl") else None,
         # no media on this record (camera status events never have any): the latest frame from the same camera
@@ -297,8 +349,44 @@ def decide(alarm_id):
     a = datasource.find_alarm(user, alarm_id, b.get("projectId"))
     if not a:
         raise ApiError("not_found", "Alert not available.", 404)
-    result = tickets.decide(a, user, str(b.get("result") or ""), b.get("note"), b.get("clientId"))
+    try:
+        result = tickets.decide(a, user, str(b.get("result") or ""), b.get("note"), b.get("clientId"),
+                                expected_revision=b.get("expectedRevision"))
+    except ApiError:
+        raise
+    except Exception:
+        # nothing was committed (one transaction): the screen must not show success
+        if b.get("result") == "valid":
+            obs.count("ticket.create_failure")
+        obs.event("alert.decide", "error", logging.ERROR, alarm_id=alarm_id, project_id=a.get("projectId"), user=user)
+        raise
+    fresh = datasource.find_alarm(user, alarm_id, a.get("projectId"))
+    if fresh:
+        result["alert"] = fresh["alert"]
     return jsonify(result)
+
+
+@bp.route("/api/queue/<alarm_id>/acknowledge", methods=["POST"])
+@rbac.internal("alarm.validate", "alarm.invalidate", "alarm.exception", "alarm.investigate", any_of=True)
+def acknowledge(alarm_id):
+    """The ACKNOWLEDGE step: the operator picks the alert up ("I have this") before deciding it. Who / when is
+    recorded and the alert leaves NEW; nothing is delivered, the review revision does not move, and deciding an
+    alert nobody acknowledged acknowledges it implicitly. Idempotent: the first acknowledgement stays."""
+    user = _user()
+    b = body()
+    a = datasource.find_alarm(user, alarm_id, b.get("projectId"))
+    if not a:
+        raise ApiError("not_found", "Alert not available.", 404)
+    if a.get("eventKind") == "camera_status":
+        raise ApiError("camera_event", "Camera online / offline events are counted in the Cameras KPI and camera health. "
+                                       "They are not alerts to acknowledge or decide.", 409)
+    review, changed = db.acknowledge(alarm_id, user, b.get("note"), snapshot=workflow._snapshot(a),
+                                     project_id=a.get("projectId"))
+    obs.event("alert.acknowledge", "ok", alarm_id=alarm_id, project_id=a.get("projectId"), user=user,
+              idempotent=(not changed) or None)
+    fresh = datasource.find_alarm(user, alarm_id, a.get("projectId"))
+    return jsonify({"acknowledged": {"by": review["acknowledgedBy"], "at": review["acknowledgedAt"]},
+                    "idempotent": not changed, "review": review, "alert": fresh["alert"] if fresh else None})
 
 
 # ---------------------------------------------------------------------------
@@ -322,10 +410,26 @@ def tickets_list():
 
 
 def _evidence(user, a):
-    if "evidence.view" not in user["permissions"]:
-        return []
-    ev = [{"kind": "video", "index": 0, "url": a["videoUrl"]}] if a.get("videoUrl") else []
-    return ev + [{"kind": "image", "index": i, "url": u} for i, u in enumerate(a.get("imageUrls") or [])]
+    """Video first, then images — as /api/media links resolved when the browser asks (never a stored signed link)."""
+    return alert_service.evidence_items(a, "evidence.view" in user["permissions"])
+
+
+@bp.route("/api/media/<alarm_id>/<kind>/<int:index>")
+@rbac.internal("evidence.view")
+def media_item(alarm_id, kind, index):
+    """One evidence file of an alert the user may see: a redirect to its freshly signed link (?proxy=1 streams it
+    through this server). Expired / missing / slow files answer 410 / 404 / 504 — never break the page."""
+    user = _user()
+    pid = request.args.get("projectId") or None
+    if pid and not rbac.project_allowed(user, pid):
+        raise ApiError("not_found", "Evidence not available.", 404)
+    if not rbac.is_global(user) or not pid:
+        # narrow scopes (TC / centre / camera) need the alert's context; a global user needs only the project
+        a = alert_service.get(user, alarm_id, pid)
+        if not a:
+            raise ApiError("not_found", "Evidence not available.", 404)
+        pid = str(a.get("projectId"))
+    return serve_media(alarm_id, kind, index, pid, proxy=request.args.get("proxy") == "1")
 
 
 def _camera_evidence(user, a):
@@ -386,7 +490,7 @@ def ticket_detail(tid):
     if not a:
         raise ApiError("not_found", "The alert for this ticket is not available to you.", 404)
     p = user["permissions"]
-    return jsonify({"ticket": t, "alarm": a, "evidence": _evidence(user, a),
+    return jsonify({"ticket": t, "alarm": alert_service.public(a, user), "alert": a["alert"], "evidence": _evidence(user, a),
                     "freshness": datasource.freshness(datasource.refresh(t["projectId"])),
                     "can": {"send": "alarm.publish" in p, "withdraw": "alarm.withdraw" in p,
                             "download": "evidence.download" in p}})
@@ -437,6 +541,7 @@ def exams_list():
         counts[e["id"]] = db.one(f"SELECT COUNT(*) AS n FROM tickets WHERE exam_id=? AND status='open' "
                                  f"AND project_id IN ({ph})", [e["id"], *pid_set])["n"]
         e["tickets"] = counts[e["id"]]
+        e["phase"] = exams.phase(e)                       # pre_exam | live_exam | post_exam | unknown (now)
         e["projects"] = [project_label(p) for p in e["projectIds"]]
         # client logins that can see this exam: all logins of the exam's client, unless limited to other exams
         e["logins"] = [] if not e.get("clientId") else [

@@ -13,13 +13,16 @@ export default {
     <div class="login">
       <section class="l-brand">
         <div class="row login-brand"><span data-brand-mark>${brandMarkHtml()}</span><div><div class="brand-name" data-brand-name>${esc(brand.name)}</div><div class="brand-sub" data-brand-sub>${esc(brand.subtitle)}</div></div></div>
-        <div>
-          <div class="hero-eyebrow" style="font-size:11px;letter-spacing:.24em;font-weight:800;color:var(--accent-2)">ALARM INTELLIGENCE • LIVE OPERATIONS • INVESTIGATION • COLLABORATION</div>
-          <h1>COMMAND CENTER</h1>
-          <p class="dim" style="max-width:520px;font-size:14px">Monitor alarm activity, investigate with full context and evidence, validate, approve and share only what the client is authorised to see — with every step audited.</p>
-          <div class="flow">${['DETECT', 'REVIEW', 'INVESTIGATE', 'VALIDATE', 'APPROVE', 'SHARE', 'MONITOR', 'REPORT'].map((s) => `<span>${s}</span>`).join('<span style="border:0;padding:4px 0">→</span>')}</div>
+        ${session.clientPortal ? `<div>
+          <h1 class="l-portal-h">Exam alerts portal</h1>
+          <p class="dim" style="max-width:520px;font-size:15px">See the alerts raised at your exam centres, with photo and video evidence, and acknowledge them so the operations team knows you have seen them.</p>
+          <ul class="l-points"><li>Only your own exams and centres</li><li>Evidence for every alert</li><li>One click to acknowledge</li></ul>
         </div>
-        <div class="muted" style="font-size:11.5px">${icon('lock', 's')} The Camview API key never leaves the server. Access is enforced server-side by role, scope and client.</div>
+        <div class="muted" style="font-size:12px">${icon('lock', 's')} Your organisation's data is kept separate. Sign in with the account your exam operations team created for you.</div>` : `<div>
+          <h1 class="l-portal-h">Command Center</h1>
+          <p class="dim" style="max-width:520px;font-size:15px">Monitor alarm activity, investigate with full context and evidence, and share with each client only what it may see. Every step is audited.</p>
+        </div>
+        <div class="muted" style="font-size:12px">${icon('lock', 's')} The Camview API key never leaves the server. Access is enforced server-side by role, scope and client.</div>`}
       </section>
       <section class="l-form">
         <div class="l-card">

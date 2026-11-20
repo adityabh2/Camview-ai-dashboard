@@ -27,6 +27,70 @@ bp = Blueprint("common", __name__)
 # helpers
 # ---------------------------------------------------------------------------
 
+def serve_media(alarm_id, kind, index, project_id=None, proxy=False):
+    """One evidence file, resolved now (media.resolve): a redirect to the freshly signed link (internal screens —
+    the browser then talks to the file store directly, Range requests included), or the file streamed through
+    this server (`proxy`: the client portal never sees an internal link). Failures are clean JSON errors
+    (404 not found · 410 expired · 504 timeout · 502 unavailable) — the page shows UNAVAILABLE for that item only."""
+    import logging
+
+    import media
+    import obs
+    from flask import redirect
+    if kind not in ("image", "video"):
+        raise ApiError("not_found", "Evidence not available.", 404)
+    url, state = media.resolve(alarm_id, kind, index, project_id)
+    if state != "ok":
+        obs.count("media.failure")
+        obs.event("media.resolve", state, logging.INFO, alarm_id=alarm_id, project_id=project_id, kind=kind, index=index)
+        raise (ApiError("media_expired", "The link to this evidence file has expired and no newer one is available.", 410)
+               if state == "expired" else ApiError("media_not_found", "Evidence not available.", 404))
+    if url.startswith("/demo-evidence/"):
+        if not proxy:
+            return redirect(url, 302)
+        return demo_svg_response(url)
+    proxy = proxy or config.MEDIA_MODE == "proxy"          # browsers that cannot reach the media store directly
+    if not proxy:
+        resp = redirect(url, 302)
+        resp.headers["Cache-Control"] = "private, max-age=120"   # links are re-resolved every 2 minutes at most
+        return resp
+    rng = request.headers.get("Range")
+    upstream, err = media.open_stream(url, rng)
+    if err and err[0] == "media_expired":                       # the store refused the link: get a newly signed one
+        url2, state2 = media.resolve(alarm_id, kind, index, project_id, force_fresh=True)
+        if state2 == "ok" and url2 != url:
+            upstream, err = media.open_stream(url2, rng)
+    if err:
+        obs.count("media.failure")
+        obs.event("media.fetch", err[0], logging.WARNING, alarm_id=alarm_id, project_id=project_id, kind=kind, index=index)
+        raise ApiError(*err)
+    headers = {k: upstream.headers[k] for k in media.STREAM_HEADERS if k in upstream.headers}
+    headers["Cache-Control"] = "private, max-age=300"
+
+    def gen():
+        try:
+            for chunk in upstream.iter_content(64 * 1024):
+                yield chunk
+        except Exception:                                        # slow / broken upstream mid-stream: end cleanly
+            obs.count("media.failure")
+        finally:
+            upstream.close()
+    return Response(stream_with_context(gen()), status=upstream.status_code, headers=headers)
+
+
+def demo_svg_response(url):
+    import demo_evidence
+    from urllib.parse import parse_qs, urlparse
+    if config.MODE != "demo":
+        raise ApiError("not_found", "Evidence not available.", 404)
+    u = urlparse(url)
+    q = {k: v[0] for k, v in parse_qs(u.query).items()}
+    name = u.path.rsplit("/", 1)[-1].removesuffix(".svg")
+    svg = demo_evidence.render(name, q.get("cam", ""), q.get("room", ""), q.get("ts", ""), q.get("type", ""),
+                               int(q.get("f", "0") or 0))
+    return Response(svg, mimetype="image/svg+xml", headers={"Cache-Control": "private, max-age=300"})
+
+
 def body():
     return request.get_json(silent=True) or {}
 
@@ -130,6 +194,7 @@ def auth_session():
     """Public: tells the login screen what mode we're in. Never includes secrets."""
     user = rbac.current_user()
     out = {"authenticated": bool(user), "mode": config.MODE, "features": config.FEATURES, "passwordMin": config.PASSWORD_MIN,
+           "noLogin": rbac.no_login_here(), "clientPortal": rbac.client_only_door(),
            "product": {"name": "CAMVIEW", "product": "Command Center",
                        "tagline": "Alarm Intelligence • Live Operations • Investigation • Collaboration"}}
     if config.MODE == "demo":
@@ -165,6 +230,10 @@ def login():
     user = rbac.load_user(row["id"])
     if not user or not user["permissions"]:
         raise ApiError("account_disabled", "This account has no access (inactive client or empty role).", 403)
+    if rbac.client_only_door() and user["audience"] != "client":
+        _record_fail(ip)                               # same answer as a wrong password: nothing to learn here
+        db.audit("auth.login_refused_internal_on_portal", None, "user", email, details={"ip": ip})
+        raise ApiError("invalid_credentials", "Sign-in name or password is incorrect.", 401)
     session.clear()
     session["uid"] = row["id"]
     session["pwv"] = user.get("pwChangedAt")      # a later password change or reset signs this session out

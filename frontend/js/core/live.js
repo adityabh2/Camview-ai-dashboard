@@ -77,6 +77,8 @@ async function poll({ reason = 'timer' } = {}) {
         unread: s.unreadNotifications,
         mode: s.freshness.mode,
         cacheSeconds: s.freshness.cacheSeconds,
+        notPersisted: s.overall?.notPersisted || [],
+        windowLimited: s.overall?.windowLimited || [],
         version: s.dataVersion ?? null,
         lastPollOkAt: Date.now(),
       });

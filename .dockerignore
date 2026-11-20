@@ -4,3 +4,10 @@
 **/.pytest_cache
 backend/tests
 .git
+**/.session-secret
+**/initial-admin-password.txt
+**/backups
+backend/backup-*
+e2e
+frontend/tests
+*.bat

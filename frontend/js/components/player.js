@@ -15,8 +15,11 @@ import { lightbox } from './evidence.js';
 const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
 const t2 = (s) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}` : '–:––');
 
-const unavailable = (kind, why) => `<div class="pl-unavail">${icon(kind === 'video' ? 'video' : 'image', 'l')}
-  <b>${kind === 'video' ? 'VIDEO UNAVAILABLE' : 'IMAGE UNAVAILABLE'}</b><span>${esc(why)}</span></div>`;
+const unavailable = (kind, why, retry = false) => `<div class="pl-unavail">${icon(kind === 'video' ? 'video' : 'image', 'l')}
+  <b>${kind === 'video' ? 'VIDEO UNAVAILABLE' : 'IMAGE UNAVAILABLE'}</b><span>${esc(why)}</span>
+  ${retry ? `<button type="button" class="btn sm" data-retry-${kind}>${icon('refresh', 's')} Retry</button>` : ''}</div>`;
+// a retry asks the server again: the link is re-resolved (a newly signed one when the old one expired)
+const retryUrl = (u) => `${u}${u.includes('?') ? '&' : '?'}retry=${Date.now()}`;
 
 export function mountEvidence(videoRoot, imageRoot, items, { alarmId, canDownload = false, title = '', log = true, boxes = [] } = {}) {
   const videos = items.filter((x) => x.kind === 'video');
@@ -40,7 +43,7 @@ export function mountEvidence(videoRoot, imageRoot, items, { alarmId, canDownloa
     const v = videos[vi];
     videoRoot.innerHTML = `
       <div class="pl-stage" id="pl-vstage">
-        ${brokenV.has(vi) ? unavailable('video', 'The video could not be loaded (expired link or evidence service unavailable).')
+        ${brokenV.has(vi) ? unavailable('video', 'The video could not be loaded (expired link or evidence service unavailable).', true)
           : `<video src="${esc(v.url)}" controls playsinline preload="metadata"></video><div class="pl-loading" id="pl-vload"><span class="spin"></span>Loading video…</div>`}
       </div>
       <div class="pl-bar">
@@ -63,6 +66,7 @@ export function mountEvidence(videoRoot, imageRoot, items, { alarmId, canDownloa
       el.addEventListener('playing', () => { load?.remove(); audit(v); });
       el.addEventListener('error', () => { brokenV.add(vi); paintVideo(); }, { once: true });
     }
+    $('[data-retry-video]', videoRoot)?.addEventListener('click', () => { brokenV.delete(vi); v.url = retryUrl(v.url); paintVideo(); });
     $('[data-vspeed]', videoRoot)?.addEventListener('change', (e) => { speed = +e.target.value; if (el) el.playbackRate = speed; });
     $('[data-vfs]', videoRoot)?.addEventListener('click', () => (document.fullscreenElement ? document.exitFullscreen() : (el || $('#pl-vstage', videoRoot)).requestFullscreen?.()));
     $$('[data-clip-i]', videoRoot).forEach((b) => b.addEventListener('click', () => { vi = +b.dataset.clipI; paintVideo(); }));
@@ -77,16 +81,19 @@ export function mountEvidence(videoRoot, imageRoot, items, { alarmId, canDownloa
       return;
     }
     const img = images[ii];
+    const broken = brokenI.has(ii);                 // a broken image is a plain panel (its Retry must be clickable)
+    const tag = broken ? 'div' : 'button';
     imageRoot.innerHTML = `
-      <button class="pl-img" data-open aria-label="Enlarge image ${ii + 1}" ${brokenI.has(ii) ? 'disabled' : ''}>
-        ${brokenI.has(ii) ? unavailable('image', 'The image could not be loaded.') : `<span class="pl-frame"><img src="${esc(img.url)}" alt="Evidence image ${ii + 1}">${boxes.length && ii === 0 ? '<svg class="pl-boxes" aria-hidden="true"></svg>' : ''}</span>`}
+      <${tag} class="pl-img" ${broken ? '' : `data-open aria-label="Enlarge image ${ii + 1}"`}>
+        ${broken ? unavailable('image', 'The image could not be loaded.', true) : `<span class="pl-frame"><img src="${esc(img.url)}" alt="Evidence image ${ii + 1}">${boxes.length && ii === 0 ? '<svg class="pl-boxes" aria-hidden="true"></svg>' : ''}</span>`}
         ${seq ? `<span class="pl-tag">${icon('play', 's')} SNAPSHOT SEQUENCE · ${ii + 1}/${images.length} · not a video</span>` : images.length > 1 ? `<span class="pl-tag">${ii + 1} / ${images.length}</span>` : ''}
-        ${brokenI.has(ii) ? '' : `<span class="pl-zoom">${icon('search', 's')} Enlarge</span>`}
-      </button>
+        ${broken ? '' : `<span class="pl-zoom">${icon('search', 's')} Enlarge</span>`}
+      </${tag}>
       ${images.length > 1 ? `<div class="pl-strip">${images.map((x, i) => `<button class="pl-thumb ${i === ii ? 'on' : ''} ${brokenI.has(i) ? 'broken' : ''}" data-img="${i}" aria-label="Image ${i + 1}">
           ${brokenI.has(i) ? '<span class="pl-v"><small>IMAGE UNAVAILABLE</small></span>' : `<img src="${esc(x.url)}" alt="" loading="lazy">`}</button>`).join('')}</div>
         <div class="pl-bar"><button class="btn sm" data-seq>${icon(seq ? 'pause' : 'play', 's')} ${seq ? 'Stop sequence' : 'Play as sequence'}</button></div>` : ''}`;
     $('.pl-img img', imageRoot)?.addEventListener('error', () => { brokenI.add(ii); paintImages(); }, { once: true });
+    $('[data-retry-image]', imageRoot)?.addEventListener('click', (e) => { e.stopPropagation(); brokenI.delete(ii); img.url = retryUrl(img.url); paintImages(); });
     $$('.pl-thumb img', imageRoot).forEach((t) => t.addEventListener('error', () => { const i = +t.closest('[data-img]').dataset.img; if (!brokenI.has(i)) { brokenI.add(i); paintImages(); } }, { once: true }));
     $('[data-open]', imageRoot)?.addEventListener('click', () => { stopSeq(); lightbox(images, ii, { alarmId, canDownload, title, log }); });
     $$('[data-img]', imageRoot).forEach((b) => b.addEventListener('click', () => { stopSeq(); ii = +b.dataset.img; paintImages(); }));

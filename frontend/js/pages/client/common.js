@@ -7,8 +7,8 @@ export const ctxCodes = (a) => (a.context || []).length
   : '<span class="muted">—</span>';
 
 export const ackBadge = (a) => a.acknowledgedAt
-  ? `<span class="b vis-shared" title="Acknowledged by ${esc(a.acknowledgedBy || '')}">${icon('check')}acknowledged</span>`
-  : `<span class="b vis-ready_for_review">${icon('clock')}awaiting acknowledgement</span>`;
+  ? `<span class="b vis-shared" title="Acknowledged by ${esc(a.acknowledgedBy || '')}">${icon('check')}Acknowledged</span>`
+  : `<span class="b vis-ready_for_review">${icon('clock')}Waiting for you</span>`;
 
 export const locationLine = (a) => (a.locationLabel
   ? `<span class="mono">${esc(a.locationLabel)}</span>${a.cameraName ? ` · ${esc(a.cameraName)}` : ''}` : ctxCodes(a));

@@ -76,16 +76,42 @@ def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
+BUSY_TIMEOUT = 10          # seconds a statement waits for another writer before "database is locked"
+
+
+class DatabaseBusy(Exception):
+    """The database stayed locked by another writer for longer than BUSY_TIMEOUT. Nothing was committed;
+    the caller answers 503 (try again) — never a false success."""
+
+
+def is_locked(e):
+    return isinstance(e, sqlite3.OperationalError) and ("locked" in str(e) or "busy" in str(e))
+
+
 @contextmanager
-def connect():
-    conn = sqlite3.connect(DB_PATH, timeout=10)
+def connect(immediate=False):
+    """One connection = one transaction: everything written inside is committed together, or (on any
+    exception) nothing is. `immediate=True` takes the write lock at the start (BEGIN IMMEDIATE), so a
+    read-check-write sequence (revision check, idempotency check) cannot interleave with another writer."""
+    conn = sqlite3.connect(DB_PATH, timeout=BUSY_TIMEOUT)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA synchronous = NORMAL")
     try:
-        yield conn
-        changed = conn.total_changes
-        conn.commit()
+        try:
+            if immediate:
+                conn.execute("BEGIN IMMEDIATE")
+            yield conn
+            changed = conn.total_changes
+            conn.commit()
+        except sqlite3.OperationalError as e:
+            conn.rollback()
+            if is_locked(e):
+                raise DatabaseBusy(str(e)) from e
+            raise
+        except BaseException:
+            conn.rollback()
+            raise
     finally:
         conn.close()
     # Any committed INSERT / UPDATE / DELETE is a data change the screens must learn about
@@ -314,6 +340,51 @@ CREATE INDEX IF NOT EXISTS idx_tickets_client ON tickets(client_id, delivery_sta
 CREATE TABLE IF NOT EXISTS recipient_groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, description TEXT, roles TEXT, user_ids TEXT, created_at TEXT
 );
+-- canonical alert store: every record received from Camview, as normalized, so an alert that was ever listed
+-- stays openable after a feed refresh, a page shift, a restart or a Camview outage (alert_store.py)
+CREATE TABLE IF NOT EXISTS alerts (
+    alarm_id      TEXT PRIMARY KEY,
+    project_id    TEXT NOT NULL,
+    event_kind    TEXT,
+    last_instance TEXT,
+    record        TEXT NOT NULL,
+    fingerprint   TEXT,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at  TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_project ON alerts(project_id, last_instance);
+-- durable work queue / outbox (jobs.py): PENDING -> RUNNING -> DONE | RETRY -> ... -> FAILED
+CREATE TABLE IF NOT EXISTS jobs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind         TEXT NOT NULL,
+    dedupe_key   TEXT UNIQUE,
+    payload      TEXT,
+    status       TEXT NOT NULL,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 8,
+    next_run_at  TEXT,
+    last_error   TEXT,
+    result       TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    started_at   TEXT,
+    finished_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(status, next_run_at);
+-- data-quality events: malformed / unusable Camview records are counted and kept, never silently dropped
+CREATE TABLE IF NOT EXISTS dq_events (
+    key        TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL,
+    project_id TEXT,
+    alarm_id   TEXT,
+    detail     TEXT,
+    sample     TEXT,
+    count      INTEGER NOT NULL DEFAULT 1,
+    first_at   TEXT NOT NULL,
+    last_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dq_kind ON dq_events(kind, last_at);
 -- camera / recording health from a REAL source (push adapter); never derived from alarm names
 CREATE TABLE IF NOT EXISTS camera_health (
     project_id TEXT NOT NULL, camera_id TEXT NOT NULL,
@@ -328,8 +399,42 @@ _COLUMN_MIGRATIONS = {
     "notifications": {"severity": "TEXT", "snoozed_until": "TEXT"},
     "users": {"prev_login_at": "TEXT", "pw_changed_at": "TEXT"},
     "alert_rules": {"status": "TEXT", "version": "INTEGER", "updated_at": "TEXT", "updated_by": "TEXT"},
-    "camera_health": {"raw_status": "TEXT"},
+    "camera_health": {"raw_status": "TEXT", "last_frame_at": "TEXT"},
+    # optimistic concurrency: every decision bumps the revision; one made against an older revision is a conflict
+    "ops_review": {"revision": "INTEGER NOT NULL DEFAULT 0",
+                   # the ACKNOWLEDGE step of the review flow: who picked the alert up and when (kept once decided)
+                   "acknowledged_by": "TEXT", "acknowledged_by_id": "TEXT", "acknowledged_at": "TEXT"},
 }
+
+
+# the lookups every screen and every delivery makes (idempotent; primary keys already cover alerts.alarm_id,
+# ops_review.alarm_id, tickets.alarm_id (UNIQUE) and publications(alarm_id, client_id))
+INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_alerts_project ON alerts(project_id, last_instance);
+CREATE INDEX IF NOT EXISTS idx_tickets_client ON tickets(client_id, delivery_status);
+CREATE INDEX IF NOT EXISTS idx_tickets_project ON tickets(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_pub_client_status ON publications(client_id, status);
+CREATE INDEX IF NOT EXISTS idx_pub_project ON publications(project_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(status, next_run_at);
+CREATE INDEX IF NOT EXISTS idx_review_status ON ops_review(status, updated_at);
+"""
+
+INTEGRITY = {"checkedAt": None, "ok": None, "detail": None}
+
+
+def check_integrity(full=False):
+    """PRAGMA quick_check (or integrity_check) + foreign_key_check. Run after migrations at start-up; the result
+    is part of /readyz. Never raises."""
+    try:
+        with connect() as conn:
+            res = [r[0] for r in conn.execute("PRAGMA integrity_check" if full else "PRAGMA quick_check").fetchall()]
+            fk = conn.execute("PRAGMA foreign_key_check").fetchall()
+        ok = res == ["ok"] and not fk
+        detail = None if ok else "; ".join(res[:3]) + (f"; {len(fk)} foreign-key violation(s)" if fk else "")
+    except Exception as e:
+        ok, detail = False, f"{type(e).__name__}: {e}"
+    INTEGRITY.update(checkedAt=now_iso(), ok=ok, detail=detail, path=DB_PATH)
+    return ok
 
 
 def init_db():
@@ -355,6 +460,10 @@ def init_db():
         conn.execute("UPDATE alert_rules SET status = CASE WHEN enabled=1 THEN 'active' ELSE 'disabled' END "
                      "WHERE status IS NULL")
         conn.execute("UPDATE alert_rules SET version = 1 WHERE version IS NULL")
+        # Camview's lastFrameSync used to be stored as the RECORDING time: it is the camera's last frame
+        conn.execute("UPDATE camera_health SET last_frame_at=COALESCE(last_frame_at, last_recording_at), "
+                     "last_recording_at=NULL WHERE source='camview' AND last_recording_at IS NOT NULL")
+        conn.executescript(INDEXES)
         # One-time migration of the old review trail into the append-only audit table.
         migrated = conn.execute("SELECT value FROM settings WHERE key='migrated_audit_log'").fetchone()
         if not migrated:
@@ -372,16 +481,22 @@ def init_db():
 # --------------------------------------------------------------------------
 
 def audit(action, user=None, resource_type=None, resource_id=None, old=None, new=None,
-          project_id=None, client_id=None, note=None, details=None):
+          project_id=None, client_id=None, note=None, details=None, conn=None):
+    """Appends one audit event. With `conn` it is part of the caller's transaction (written only if the
+    operation it describes is committed) — required inside a `connect(immediate=True)` block, where a
+    second connection would wait for the write lock that block holds."""
+    sql = ("INSERT INTO audit_events (at, user_id, user_name, action, resource_type, resource_id, old_value, "
+           "new_value, project_id, client_id, note, details) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+    params = (now_iso(), (user or {}).get("id"), (user or {}).get("name"), action, resource_type,
+              None if resource_id is None else str(resource_id),
+              None if old is None else (old if isinstance(old, str) else jdump(old)),
+              None if new is None else (new if isinstance(new, str) else jdump(new)),
+              None if project_id is None else str(project_id), client_id, note, jdump(details))
+    if conn is not None:
+        conn.execute(sql, params)
+        return
     with quiet():                                   # an audit row on its own changes nothing on screen
-        execute(
-            "INSERT INTO audit_events (at, user_id, user_name, action, resource_type, resource_id, old_value, "
-            "new_value, project_id, client_id, note, details) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            (now_iso(), (user or {}).get("id"), (user or {}).get("name"), action, resource_type,
-             None if resource_id is None else str(resource_id),
-             None if old is None else (old if isinstance(old, str) else jdump(old)),
-             None if new is None else (new if isinstance(new, str) else jdump(new)),
-             None if project_id is None else str(project_id), client_id, note, jdump(details)))
+        execute(sql, params)
 
 
 def audit_query(filters=None, limit=200, offset=0):
@@ -421,9 +536,14 @@ def bulk_get_review_status(alarm_ids):
     return {k: v["status"] for k, v in reviews_for(alarm_ids).items()}
 
 
-def apply_action(alarm_id, action, operator, note=None, snapshot=None, user=None, project_id=None):
+def apply_action(alarm_id, action, operator, note=None, snapshot=None, user=None, project_id=None, conn=None):
     """Records an operator review action. `operator` is the display name;
-    `user` (dict) is the authenticated user when available."""
+    `user` (dict) is the authenticated user when available. With `conn` the write joins the caller's
+    transaction (a decision, its ticket and its delivery intent commit together or not at all).
+    Every status change bumps the review's revision (optimistic concurrency, see tickets.decide)."""
+    if conn is None:
+        with connect() as own:
+            return apply_action(alarm_id, action, operator, note, snapshot, user, project_id, own)
     if action not in ALLOWED_ACTIONS:
         raise ValueError(f"Unknown action '{action}'. Allowed: {sorted(ALLOWED_ACTIONS)}")
     if not operator or not str(operator).strip():
@@ -435,36 +555,34 @@ def apply_action(alarm_id, action, operator, note=None, snapshot=None, user=None
     first_review = now if action not in ("reopen", "note") else None
     validator = (user or {}).get("id") if action in ("mark_valid", "mark_invalid", "mark_exception") else None
 
-    with connect() as conn:
-        before = conn.execute("SELECT status FROM ops_review WHERE alarm_id = ?", (alarm_id,)).fetchone()
-        if new_status is not None:
-            conn.execute("""
-                INSERT INTO ops_review (alarm_id, status, updated_at, updated_by, snapshot, first_reviewed_at, validated_by_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(alarm_id) DO UPDATE SET
-                    status=excluded.status, updated_at=excluded.updated_at, updated_by=excluded.updated_by,
-                    snapshot=COALESCE(excluded.snapshot, ops_review.snapshot),
-                    first_reviewed_at=COALESCE(ops_review.first_reviewed_at, excluded.first_reviewed_at),
-                    validated_by_id=CASE WHEN excluded.validated_by_id IS NOT NULL THEN excluded.validated_by_id
-                                         WHEN excluded.status IN ('unreviewed','acknowledged') THEN NULL
-                                         ELSE ops_review.validated_by_id END
-            """, (alarm_id, new_status, now, operator, snapshot_json, first_review, validator))
-        elif snapshot_json:
-            conn.execute("UPDATE ops_review SET snapshot = ? WHERE alarm_id = ?", (snapshot_json, alarm_id))
-        conn.execute(
-            "INSERT INTO audit_events (at, user_id, user_name, action, resource_type, resource_id, old_value, "
-            "new_value, project_id, note) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (now, (user or {}).get("id"), operator, "review." + action, "alarm", alarm_id,
-             before["status"] if before else "unreviewed", new_status,
-             None if project_id is None else str(project_id), (note or "").strip() or None))
-        row = conn.execute("SELECT status, updated_at, updated_by FROM ops_review WHERE alarm_id = ?",
-                           (alarm_id,)).fetchone()
-    return {
-        "alarmId": alarm_id,
-        "status": row["status"] if row else "unreviewed",
-        "updatedAt": row["updated_at"] if row else None,
-        "updatedBy": row["updated_by"] if row else None,
-    }
+    before = conn.execute("SELECT status FROM ops_review WHERE alarm_id = ?", (alarm_id,)).fetchone()
+    if new_status is not None:
+        conn.execute("""
+            INSERT INTO ops_review (alarm_id, status, updated_at, updated_by, snapshot, first_reviewed_at, validated_by_id,
+                                    revision)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT(alarm_id) DO UPDATE SET
+                status=excluded.status, updated_at=excluded.updated_at, updated_by=excluded.updated_by,
+                revision=ops_review.revision + 1,
+                snapshot=COALESCE(excluded.snapshot, ops_review.snapshot),
+                first_reviewed_at=COALESCE(ops_review.first_reviewed_at, excluded.first_reviewed_at),
+                validated_by_id=CASE WHEN excluded.validated_by_id IS NOT NULL THEN excluded.validated_by_id
+                                     WHEN excluded.status IN ('unreviewed','acknowledged') THEN NULL
+                                     ELSE ops_review.validated_by_id END
+        """, (alarm_id, new_status, now, operator, snapshot_json, first_review, validator))
+        if action != "reopen":      # any review action implies the alert was picked up: the first acknowledgement stays
+            conn.execute("UPDATE ops_review SET acknowledged_by=COALESCE(acknowledged_by, ?), "
+                         "acknowledged_by_id=COALESCE(acknowledged_by_id, ?), acknowledged_at=COALESCE(acknowledged_at, ?) "
+                         "WHERE alarm_id=?", (operator, (user or {}).get("id"), now, alarm_id))
+    elif snapshot_json:
+        conn.execute("UPDATE ops_review SET snapshot = ? WHERE alarm_id = ?", (snapshot_json, alarm_id))
+    conn.execute(
+        "INSERT INTO audit_events (at, user_id, user_name, action, resource_type, resource_id, old_value, "
+        "new_value, project_id, note) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (now, (user or {}).get("id"), operator, "review." + action, "alarm", alarm_id,
+         before["status"] if before else "unreviewed", new_status,
+         None if project_id is None else str(project_id), (note or "").strip() or None))
+    return _state(alarm_id, conn.execute(f"SELECT {_STATE_COLS} FROM ops_review WHERE alarm_id = ?", (alarm_id,)).fetchone())
 
 
 def get_audit_trail(alarm_id):
@@ -481,11 +599,55 @@ def get_audit_trail(alarm_id):
     return out
 
 
-def get_review(alarm_id):
-    r = one("SELECT status, updated_at, updated_by FROM ops_review WHERE alarm_id = ?", (alarm_id,))
+_STATE_COLS = "status, updated_at, updated_by, revision, acknowledged_by, acknowledged_at"
+
+
+def _state(alarm_id, r):
+    """The review state every decision / acknowledgement answers with (and the conflict check reads)."""
     if not r:
-        return {"alarmId": alarm_id, "status": "unreviewed", "updatedAt": None, "updatedBy": None}
-    return {"alarmId": alarm_id, "status": r["status"], "updatedAt": r["updated_at"], "updatedBy": r["updated_by"]}
+        return {"alarmId": alarm_id, "status": "unreviewed", "updatedAt": None, "updatedBy": None, "revision": 0,
+                "acknowledgedBy": None, "acknowledgedAt": None}
+    return {"alarmId": alarm_id, "status": r["status"], "updatedAt": r["updated_at"], "updatedBy": r["updated_by"],
+            "revision": r["revision"] or 0, "acknowledgedBy": r["acknowledged_by"], "acknowledgedAt": r["acknowledged_at"]}
+
+
+def get_review(alarm_id, conn=None):
+    q = f"SELECT {_STATE_COLS} FROM ops_review WHERE alarm_id = ?"
+    r = conn.execute(q, (alarm_id,)).fetchone() if conn is not None else one(q, (alarm_id,))
+    return _state(alarm_id, r)
+
+
+def acknowledge(alarm_id, user, note=None, snapshot=None, project_id=None, conn=None):
+    """The ACKNOWLEDGE step of the review flow: records who picked the alert up and when. It is NOT a decision:
+    the review revision does not move (an operator deciding from a view taken before the acknowledgement is not
+    in conflict) and the decision stays pending. Idempotent: an acknowledged alert keeps its first
+    acknowledgement and gets no second audit row. Returns (review state, changed)."""
+    if conn is None:
+        with connect() as own:
+            return acknowledge(alarm_id, user, note, snapshot, project_id, own)
+    cur = get_review(alarm_id, conn)
+    if cur["acknowledgedAt"]:
+        return cur, False
+    now = now_iso()
+    snapshot_json = jdump(snapshot) if isinstance(snapshot, dict) and snapshot else None
+    conn.execute("""
+        INSERT INTO ops_review (alarm_id, status, updated_at, updated_by, snapshot, first_reviewed_at, revision,
+                                acknowledged_by, acknowledged_by_id, acknowledged_at)
+        VALUES (?, 'acknowledged', ?, ?, ?, ?, 0, ?, ?, ?)
+        ON CONFLICT(alarm_id) DO UPDATE SET
+            status=CASE WHEN ops_review.status='unreviewed' THEN 'acknowledged' ELSE ops_review.status END,
+            snapshot=COALESCE(ops_review.snapshot, excluded.snapshot),
+            first_reviewed_at=COALESCE(ops_review.first_reviewed_at, excluded.first_reviewed_at),
+            acknowledged_by=excluded.acknowledged_by, acknowledged_by_id=excluded.acknowledged_by_id,
+            acknowledged_at=excluded.acknowledged_at
+    """, (alarm_id, now, user["name"], snapshot_json, now, user["name"], user.get("id"), now))
+    conn.execute(
+        "INSERT INTO audit_events (at, user_id, user_name, action, resource_type, resource_id, old_value, "
+        "new_value, project_id, note) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (now, user.get("id"), user["name"], "review.acknowledge", "alarm", alarm_id, cur["status"],
+         "acknowledged" if cur["status"] == "unreviewed" else cur["status"],
+         None if project_id is None else str(project_id), (note or "").strip() or None))
+    return get_review(alarm_id, conn), True
 
 
 def _review_row(r):
@@ -493,10 +655,14 @@ def _review_row(r):
         "alarmId": r["alarm_id"], "status": r["status"], "updatedAt": r["updated_at"],
         "updatedBy": r["updated_by"], "firstReviewedAt": r["first_reviewed_at"],
         "validatedById": r["validated_by_id"], "snapshot": jload(r["snapshot"], {}) or {},
+        "revision": r["revision"] or 0,
+        "acknowledgedBy": r["acknowledged_by"], "acknowledgedById": r["acknowledged_by_id"],
+        "acknowledgedAt": r["acknowledged_at"],
     }
 
 
-_REVIEW_COLS = "alarm_id, status, updated_at, updated_by, snapshot, first_reviewed_at, validated_by_id"
+_REVIEW_COLS = ("alarm_id, status, updated_at, updated_by, snapshot, first_reviewed_at, validated_by_id, revision, "
+                "acknowledged_by, acknowledged_by_id, acknowledged_at")
 
 
 def list_reviews(since=None, until=None):

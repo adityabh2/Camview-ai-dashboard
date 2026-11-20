@@ -74,6 +74,27 @@ def apply():
 
     API_URL = os.environ.get("CAMVIEW_API_URL", "").strip() or DEFAULT_API_URL
     API_KEY = os.environ.get("CAMVIEW_API_KEY", "").strip()
+    global DELIVER_ALL
+    # all = every detection alert goes to its client the moment Camview sends it (no VALID / INVALID marking);
+    # an administrator revokes single alerts from the client. valid (default) = only operator-VALID alerts.
+    DELIVER_ALL = os.environ.get("CAMVIEW_CLIENT_DELIVERY", "valid").strip().lower() == "all"
+    global NO_LOGIN
+    # 1 = no sign-in screen: every request runs as the built-in Super Admin. ONLY for a single-user install that
+    # is reachable from this computer alone (docker-compose.local.yml publishes the port on 127.0.0.1 only).
+    NO_LOGIN = os.environ.get("CAMVIEW_NO_LOGIN", "0").strip().lower() in ("1", "true", "yes", "on")
+    global NO_LOGIN_PORTS, CLIENT_ONLY_PORTS
+    # Two doors in one app (docker-compose.local.yml): the no-login administrator door only on these listener
+    # ports (published on 127.0.0.1), and a client-portal door where sign-in is required and ONLY client accounts
+    # are accepted. The port is the server's own socket, never a header, so a request cannot pretend to be local.
+    NO_LOGIN_PORTS = {p.strip() for p in os.environ.get("CAMVIEW_NO_LOGIN_PORTS", "").split(",") if p.strip()}
+    CLIENT_ONLY_PORTS = {p.strip() for p in os.environ.get("CAMVIEW_CLIENT_ONLY_PORTS", "").split(",") if p.strip()}
+    global PROJECT_API_KEY, PROJECT_LOOKUP_URL
+    # Key for the Project Lookup API (POST /api/project/listProjectsByClientProjectId). The scoped alarm key
+    # is limited to listAlarms, so this is usually a separate key or a user "Bearer <token>". Blank = API_KEY.
+    PROJECT_API_KEY = os.environ.get("CAMVIEW_PROJECT_API_KEY", "").strip()
+    PROJECT_LOOKUP_URL = os.environ.get("CAMVIEW_PROJECT_LOOKUP_URL", "").strip() or \
+        ((os.environ.get("CAMVIEW_API_URL", "").strip() or DEFAULT_API_URL).rsplit("/alarms/", 1)[0]
+         + "/api/project/listProjectsByClientProjectId")
     DEFAULT_PROJECT_ID = os.environ.get("CAMVIEW_PROJECT_ID", "").strip()
     TIMEOUT = float(os.environ.get("CAMVIEW_TIMEOUT", "15") or 15)
     mode = os.environ.get("CAMVIEW_MODE", "").strip().lower()
@@ -114,16 +135,57 @@ def apply():
     AUTO_ACTIVE_HOURS = max(1, int(os.environ.get("CAMVIEW_AUTO_ACTIVE_HOURS", "24") or 24))
     AUTO_RETIRE_HOURS = max(0, int(os.environ.get("CAMVIEW_AUTO_RETIRE_HOURS", "72") or 0))
 
+    global MEDIA_MODE
+    # redirect (default): the browser loads evidence straight from Camview's media store via a freshly signed link;
+    # proxy: evidence is streamed through this server (browsers without access to the media store, strict proxies)
+    MEDIA_MODE = "proxy" if os.environ.get("CAMVIEW_MEDIA_MODE", "").strip().lower() == "proxy" else "redirect"
+    global SECRET_SOURCE, TRUST_PROXY
+    TRUST_PROXY = os.environ.get("CAMVIEW_TRUST_PROXY", "0") == "1"   # behind a TLS proxy: honour X-Forwarded-Proto
     SECRET_KEY = os.environ.get("CAMVIEW_SECRET_KEY", "").strip()
-    if not SECRET_KEY:
-        # Sessions need a stable signing key; create one once and keep it in .env.
-        SECRET_KEY = secrets.token_urlsafe(48)
+    SECRET_SOURCE = "env" if SECRET_KEY else None
+    if not SECRET_KEY and MODE == "live":
+        # Production sessions need a STABLE signing key: a new one after every restart signs everybody out and
+        # hides a misconfiguration. Without CAMVIEW_SECRET_KEY the key is kept next to the live database (the
+        # persistent volume); if it cannot be kept there, the server refuses to start rather than improvise.
+        SECRET_KEY, SECRET_SOURCE = _persisted_secret(os.path.dirname(os.path.abspath(LIVE_DB_PATH))), "file"
+    elif not SECRET_KEY:
+        # demo: create one once and keep it in .env
+        SECRET_KEY, SECRET_SOURCE = secrets.token_urlsafe(48), "generated"
         os.environ["CAMVIEW_SECRET_KEY"] = SECRET_KEY
         if not os.environ.get("CAMVIEW_TESTING"):
             try:
                 write_env({"CAMVIEW_SECRET_KEY": SECRET_KEY})
+                SECRET_SOURCE = "env-file"
             except OSError:
                 pass
+
+
+SECRET_FILE_NAME = ".session-secret"
+
+
+def _persisted_secret(directory):
+    path = os.path.join(directory, SECRET_FILE_NAME)
+    try:
+        with open(path, encoding="utf-8") as f:
+            key = f.read().strip()
+        if len(key) >= 32:
+            return key
+    except OSError:
+        pass
+    key = secrets.token_urlsafe(48)
+    try:
+        os.makedirs(directory, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(key)
+    except OSError as e:
+        raise RuntimeError("Live mode needs a stable session secret: set CAMVIEW_SECRET_KEY (48+ random characters), "
+                           f"or make {directory} writable so one can be kept there.") from e
+    import logging
+    logging.getLogger("camview.config").warning(
+        "CAMVIEW_SECRET_KEY is not set: a session secret was generated and kept in %s (stable across restarts). "
+        "Set CAMVIEW_SECRET_KEY to manage it yourself.", path)
+    return key
 
 
 def parse_project_codes(raw):

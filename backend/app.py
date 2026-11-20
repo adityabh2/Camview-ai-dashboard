@@ -26,18 +26,36 @@ import logging
 import os
 from datetime import timedelta
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, g, jsonify, request, send_from_directory
+from flask.sessions import SecureCookieSessionInterface
 from werkzeug.exceptions import HTTPException
 
-import bootstrap
-import config
-from camview_client import ApiError
+import obs
 
-logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
-                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+obs.install_logging(os.environ.get("LOG_LEVEL", "INFO"))
+
+import bootstrap  # noqa: E402
+import config  # noqa: E402
+import db  # noqa: E402
+from camview_client import ApiError  # noqa: E402
+
 log = logging.getLogger("camview")
 
+
+class SessionInterface(SecureCookieSessionInterface):
+    """Session cookie: HttpOnly, SameSite=Lax, and Secure whenever the request itself arrived over HTTPS
+    (directly, or through a proxy when CAMVIEW_TRUST_PROXY=1) — or always with CAMVIEW_SECURE_COOKIES=1.
+    Plain-HTTP installs (a LAN, a test box) keep working; an HTTPS install never sends the cookie in clear."""
+
+    def get_cookie_secure(self, app_):
+        return bool(app_.config["SESSION_COOKIE_SECURE"]) or request.is_secure
+
+
 app = Flask(__name__, static_folder=config.FRONTEND_DIR, static_url_path="")
+app.session_interface = SessionInterface()
+if config.TRUST_PROXY:
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.secret_key = config.SECRET_KEY
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -51,7 +69,9 @@ app.config.update(
 bootstrap.run()
 if os.environ.get("CAMVIEW_TESTING") != "1":
     import datasource as _ds
+    import jobs as _jobs
     _ds.start_warmer()                      # live mode only: background refresh of every project
+    _jobs.start_worker()                    # durable jobs (client delivery): resumes unfinished work after a restart
 
 from routes_admin import bp as admin_bp      # noqa: E402
 from routes_client import bp as client_bp    # noqa: E402
@@ -80,8 +100,16 @@ GZIP_TYPES = ("application/json", "text/csv", "text/html", "text/css", "applicat
               "image/svg+xml")
 
 
+@app.before_request
+def correlation_id():
+    g.request_id = obs.new_request_id(request.headers.get("X-Request-ID"))
+
+
 @app.after_request
 def security_headers(resp):
+    rid = getattr(g, "request_id", None)
+    if rid:
+        resp.headers["X-Request-ID"] = rid
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "same-origin")
@@ -109,20 +137,61 @@ def compress(resp):
     return resp
 
 
-def _error(code, message, status):
+def _error(code, message, status, details=None):
     if status >= 500:
         log.warning("Error %s: %s (HTTP %s) on %s", code, message, status, request.path)
-    return jsonify({"error": code, "message": message}), status
+    body = {"error": code, "message": message, "requestId": getattr(g, "request_id", None)}
+    if details:
+        body["details"] = details
+    return jsonify(body), status
 
 
 @app.errorhandler(ApiError)
 def handle_api_error(e):
-    return _error(e.code, e.message, e.status)
+    return _error(e.code, e.message, e.status, getattr(e, "details", None))
+
+
+@app.errorhandler(db.DatabaseBusy)
+def handle_db_busy(e):
+    # nothing was committed: the operation can simply be repeated — never reported as a success
+    obs.count("db.busy")
+    return _error("database_busy", "The database is busy. Nothing was saved — please try again.", 503)
 
 
 @app.route("/")
 def index():
     return send_from_directory(config.FRONTEND_DIR, "index.html")
+
+
+@app.route("/healthz")
+def liveness():
+    """Liveness: the process answers. No authentication, no details."""
+    return jsonify({"status": "ok"})
+
+
+@app.route("/readyz")
+def readiness():
+    """Readiness: may this instance receive traffic? The database answers and accepts writes, the durable job
+    worker runs (outside tests), and the session secret is stable. Names what failed — never a secret or a path."""
+    import jobs
+    checks = {}
+    try:
+        with db.connect() as conn:
+            conn.execute("SELECT 1 FROM ops_review LIMIT 1").fetchall()
+            conn.execute("CREATE TEMP TABLE IF NOT EXISTS _ready (x INTEGER)")
+        checks["database"] = "ok"
+    except Exception as ex:
+        checks["database"] = "locked" if isinstance(ex, db.DatabaseBusy) else "error"
+    checks["jobWorker"] = "ok" if jobs.worker_alive() or os.environ.get("CAMVIEW_TESTING") == "1" else "stopped"
+    checks["sessionSecret"] = "ok" if config.SECRET_SOURCE in ("env", "file", "env-file") \
+        or (config.MODE == "demo" and config.SECRET_KEY) else "unstable"
+    # live mode cannot do its core work without a Camview key and URL
+    checks["configuration"] = "ok" if config.MODE == "demo" or (config.API_KEY and config.API_URL) else "incomplete"
+    import alert_store
+    checks["alertStore"] = "ok" if alert_store.HEALTH["ok"] else "failing"      # alerts received but not persisted
+    checks["integrity"] = "ok" if db.INTEGRITY.get("ok") is not False else "failed"
+    ok = all(v == "ok" for v in checks.values())
+    return jsonify({"status": "ready" if ok else "not_ready", "mode": config.MODE, "checks": checks}), 200 if ok else 503
 
 
 @app.errorhandler(404)

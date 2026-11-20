@@ -1,8 +1,9 @@
 // pages/alert.js — ALERT REVIEW. Evidence first; context is resolved automatically;
-// the only human action is the decision: VALID / INVALID / EXCEPTION.
+// the human actions are ACKNOWLEDGE ("I have this alert" — who / when, the alert leaves NEW) and then
+// the decision: VALID / INVALID / EXCEPTION. Deciding an alert nobody acknowledged acknowledges it implicitly.
 // VALID creates the ticket (once) and routes it to the exam's client — delivered
 // automatically or with one click, depending on Settings › Delivery.
-// Keys: V / I / E decide · N next alert · [ ] previous / next · ← → evidence · Space play · Esc back.
+// Keys: A acknowledge · V / I / E decide · N next alert · [ ] previous / next · ← → evidence · Space play · Esc back.
 
 import * as api from '../core/api.js';
 import { on, pref, setPref, projectCode, session } from '../core/state.js';
@@ -10,7 +11,7 @@ import { setTitle } from '../core/layout.js';
 import { esc, icon, fmt, empty, errorBox, skeleton, toast, priorityBadge, stateBadge, confirmDialog, $, $$ } from '../core/ui.js';
 import { mountEvidence } from '../components/player.js';
 import { status as liveStatus } from '../core/live.js';
-import { decisionBadge, deliveryBadge, ticketChip, queueNav, queueHref, reviewHref, where, cameraName, healthChips } from '../components/queue.js';
+import { decisionBadge, ackBadge, deliveryBadge, ticketChip, queueNav, queueHref, reviewHref, where, cameraName, healthChips } from '../components/queue.js';
 
 const RESULT_LABEL = { valid: 'Marked VALID', invalid: 'Marked INVALID', exception: 'Marked EXCEPTION' };
 
@@ -31,7 +32,7 @@ export default {
       } catch (e) {
         if (ctx.isStale()) return;
         el.innerHTML = e.status === 404
-          ? `<div class="card">${empty('Alert not available', 'It may be outside your access, or no longer in the current data window.', 'lock')}<div class="row" style="justify-content:center;padding-bottom:20px"><a class="btn" href="${queueHref()}">${icon('left', 's')} Back to alerts</a></div></div>`
+          ? `<div class="card">${empty('Alert not available', 'It does not exist or is outside your access.', 'lock')}<div class="row" style="justify-content:center;padding-bottom:20px"><a class="btn" href="${queueHref()}">${icon('left', 's')} Back to alerts</a></div></div>`
           : errorBox(e);
         $('[data-retry]', el)?.addEventListener('click', load);
       }
@@ -55,7 +56,9 @@ export default {
       const rows = [
         ['Client', a.client ? `<b>${esc(a.client.name)}</b>` : a.clients?.length > 1 ? `<span class="sla-approaching">${a.clients.length} clients — chosen on VALID</span>` : '<span class="nm-miss">CLIENT NOT MAPPED</span>'],
         ['Exam', a.exam ? `<b>${esc(a.exam.name)}</b> <span class="muted mono">${esc(a.exam.code || '')}</span>` : '<span class="nm-miss">EXAM NOT MAPPED</span>'],
-        ['Project', c.project && !c.project.unmapped ? nodeVal(c.project) + src(c.project) : `<span class="mono">${esc(projectCode(a.projectId))}</span>${projectCode(a.projectId) === String(a.projectId) ? ' <span class="muted">Camview project id — no code set yet</span>' : ''}`],
+        // projectId (from Camview) and projectCode / name (from master data) are two facts — both are shown
+        ['Project ID', `<span class="mono">${esc(a.projectId)}</span> <span class="prov direct" title="Sent by Camview with the alarm">CAMVIEW</span>`],
+        ['Project code', data.alert?.projectCode ? `<span class="mono">${esc(data.alert.projectCode)}</span>${data.alert.projectName ? `<div class="muted rv-nm">${esc(data.alert.projectName)}</div>` : ''}` : '<span class="nm-miss">PROJECT NOT MAPPED</span> <span class="muted">— no code for this project id (Settings › Monitored projects)</span>'],
         c.tc ? ['TC', nodeVal(c.tc) + src(c.tc)] : null,
         ['Centre', c.centre ? nodeVal(c.centre) + src(c.centre) : centre],
         place ? ['City / State', `${esc(place)} ${fromCamview}`] : null,
@@ -74,9 +77,11 @@ export default {
       const ev = a.evidence || {};
       const event = a.alarmEvent;
       return `<dl class="kv rv-kv">
+          ${(h.conditions || []).includes('HEALTH_SOURCE_NOT_REPORTING') ? '<dt></dt><dd><span class="nm-miss">HEALTH SOURCE NOT REPORTING</span> <span class="muted">— the monitoring source sent nothing recently</span></dd>' : ''}
           <dt>Camera</dt><dd>${h.available ? healthChips(h, 'camera') : '<span class="nm-miss">CAMERA HEALTH UNAVAILABLE</span>'}
-            ${h.camera?.lastHeartbeatAt ? `<div class="muted rv-nm">Last heartbeat ${fmt.time(h.camera.lastHeartbeatAt)} · ${fmt.rel(h.camera.lastHeartbeatAt)}</div>` : ''}</dd>
-          <dt>Recording</dt><dd>${h.available ? healthChips(h, 'recording') : '<span class="h-chip unknown">? UNKNOWN</span>'}${h.source === 'camview' && (h.recording?.state || 'unknown') === 'unknown' ? ' <span class="muted">not reported by Camview</span>' : ''}
+            ${h.camera?.lastFrameAt ? `<div class="muted rv-nm">Last frame ${fmt.time(h.camera.lastFrameAt)} · ${fmt.rel(h.camera.lastFrameAt)}</div>` : ''}
+            ${h.camera?.lastHeartbeatAt ? `<div class="muted rv-nm">Status reported ${fmt.rel(h.camera.lastHeartbeatAt)}</div>` : ''}</dd>
+          <dt>Recording</dt><dd>${h.available && (h.recording?.state || 'unknown') !== 'unknown' ? healthChips(h, 'recording') : '<span class="h-chip unknown" data-recording="unknown">RECORDING UNKNOWN</span>'}${h.source === 'camview' ? ' <span class="muted">not reported by Camview</span>' : ''}
             ${h.recording?.lastRecordingAt ? `<div class="muted rv-nm">Last recording ${fmt.time(h.recording.lastRecordingAt)} · ${fmt.rel(h.recording.lastRecordingAt)}</div>` : ''}</dd>
           ${h.lastEvent ? `<dt>Last change</dt><dd><span class="mono">${esc(h.lastEvent.type)}</span> <span class="muted">${fmt.rel(h.lastEvent.at)}</span></dd>` : ''}
           <dt>Event evidence</dt><dd>${ev.video ? `${icon('video', 's')} Video attached` : '<span class="nm-miss">NO VIDEO ATTACHED</span>'} · ${ev.images ? `${icon('image', 's')} ${ev.images} image${ev.images === 1 ? '' : 's'}` : '<span class="nm-miss">NO IMAGE</span>'}</dd>
@@ -126,8 +131,8 @@ export default {
         </dl>
         ${data.publications.filter((p) => p.status === 'shared').map((p) => `<div class="muted" style="font-size:11.5px">${icon('eye', 's')} ${esc(p.clientName)}: ${p.viewedAt ? `viewed ${fmt.rel(p.viewedAt)}` : 'not viewed yet'}${p.acknowledgedAt ? ` · acknowledged ${fmt.rel(p.acknowledgedAt)}` : ''}</div>`).join('')}
         <div class="row" style="margin-top:10px">
-          ${t.status === 'open' && ['ready', 'needs_client', 'withdrawn', 'failed'].includes(t.deliveryStatus) && data.can.send ? `<button class="btn primary sm" data-send>${icon('share', 's')} Send to client</button>` : ''}
-          ${t.status === 'open' && t.deliveryStatus === 'delivered' && data.can.withdraw ? `<button class="btn sm" data-withdraw>${icon('x', 's')} Withdraw</button>` : ''}
+          ${t.status === 'open' && ['ready', 'needs_client', 'withdrawn', 'failed'].includes(t.deliveryStatus) && data.can.send ? `<button class="btn primary sm" data-send>${icon('share', 's')} ${t.deliveryStatus === 'withdrawn' ? 'Send to client again' : 'Send to client'}</button>` : ''}
+          ${t.status === 'open' && t.deliveryStatus === 'delivered' && data.can.withdraw ? `<button class="btn sm danger" data-withdraw>${icon('x', 's')} Revoke from client</button>` : ''}
         </div>`;
     };
 
@@ -139,6 +144,7 @@ export default {
       if (last.result === 'valid' && t) {
         msg += ` · ticket <b class="mono">${esc(t.ref)}</b> ${last.ticketCreated ? 'created' : '(existing)'}${last.exam ? ` · exam <b>${esc(last.exam.name)}</b>` : ''}`;
         if (d.status === 'delivered') msg += ` · delivered to <b>${esc(d.clientName || t.clientName || 'client')}</b>`;
+        else if (d.status === 'queued') msg += ` · sending to <b>${esc(d.clientName || t.clientName || 'client')}</b> — the decision is saved; delivery is retried automatically`;
         else if (d.status === 'ready') msg += ` · ready to send to <b>${esc(d.clientName || t.clientName || 'client')}</b>`;
         else if (d.status === 'needs_client') msg += ' · this exam has several clients — choose one:';
         else if (d.status === 'not_deliverable') msg += ` · not delivered: ${esc(d.reason || 'client cannot receive this alert')}`;
@@ -188,8 +194,13 @@ export default {
       const btn = (res, cls, ic, label, key) => (c[res] ? `<button class="btn ${cls} rv-dec ${cur === res ? 'current' : ''}" data-decide="${res}" aria-pressed="${cur === res}" ${busy ? 'disabled' : ''}>${icon(ic)} ${label}<span class="kbd">${key}</span></button>` : '');
       const any = c.valid || c.invalid || c.exception;
       const pos = position();
+      // ACKNOWLEDGE comes first: "I have this alert" (who / when). Not a decision — deciding straight away acknowledges too.
+      const acked = data.alert?.acknowledgedAt;
+      const ackBtn = any && !acked && a.decision === 'pending'
+        ? `<button class="btn rv-ack" data-ack ${busy ? 'disabled' : ''} title="Acknowledge: I have this alert (A)">${icon('eye')} ACKNOWLEDGE<span class="kbd">A</span></button>` : '';
       return `${resultStrip()}
         <div class="rv-actions">
+          ${ackBtn}
           ${any ? `<div class="rv-decs">${btn('valid', 'good', 'check', 'VALID', 'V')}${btn('invalid', 'invalid', 'x', 'INVALID', 'I')}${btn('exception', 'exception', 'bang', 'EXCEPTION', 'E')}</div>`
             : `<div class="banner info grow" style="margin:0">${icon('lock')}<div>You can view this alert but your role cannot decide it.</div></div>`}
           <div class="rv-nav">
@@ -202,8 +213,9 @@ export default {
           ${queueNav.items.length ? `<span class="rv-count"><b>Reviewed ${queueNav.items.filter((x) => x.decision !== 'pending').length} / ${queueNav.items.length}</b></span>` : ''}
           <label class="check"><input type="checkbox" id="rv-auto" ${pref('autoAdvance', true) ? 'checked' : ''}> Auto-next</label>
           ${any && !data.requireRemarks && !noteOpen ? `<button class="linkish" data-note>${icon('edit', 's')} Add note</button>` : ''}
-          <span class="hide-sm">${data.deliveryTrigger === 'arrival' ? `${icon('zap', 's')} Delivered on arrival · INVALID / EXCEPTION withdraws` : data.deliveryMode === 'automatic' ? `${icon('zap', 's')} VALID → client automatically` : `${icon('share', 's')} VALID → one-click Send`}</span>
-          <span class="hide-sm">Keys: V · I · E · N</span>
+          <span class="hide-sm">${data.deliveryTrigger === 'all' ? `${icon('zap', 's')} Every alert goes to the client · revoke it here` : data.deliveryTrigger === 'arrival' ? `${icon('zap', 's')} Delivered on arrival · INVALID / EXCEPTION withdraws` : data.deliveryMode === 'automatic' ? `${icon('zap', 's')} VALID → client automatically` : `${icon('share', 's')} VALID → one-click Send`}</span>
+          ${acked ? `<span title="${esc(fmt.dt(acked))}">${icon('eye', 's')} Acknowledged by <b>${esc(data.alert.acknowledgedBy || '—')}</b> ${fmt.rel(acked)}</span>` : ''}
+          <span class="hide-sm">Keys: A · V · I · E · N</span>
         </div>`;
     };
 
@@ -212,6 +224,50 @@ export default {
       return st === 'live' ? '<span class="live-tag live"><span class="dot live"></span>LIVE</span>'
         : st === 'delayed' ? '<span class="live-tag delayed">⚠ DATA DELAYED</span>'
           : st === 'disconnected' ? '<span class="live-tag disconnected">✕ DISCONNECTED</span>' : '<span class="live-tag">CONNECTING</span>';
+    };
+
+    // Exam phase at the time of the alert, from the exam's own date window (nothing without dates).
+    const PHASE = { pre_exam: 'PRE-EXAM', live_exam: 'LIVE EXAM', post_exam: 'POST-EXAM' };
+    const phaseChip = () => {
+      const ph = data.alert?.examPhase;
+      return PHASE[ph] ? `<span class="b outline phase phase-${esc(ph)}" title="Exam phase at the time of this alert (${esc(data.alert.examStartDate || '?')} → ${esc(data.alert.examEndDate || '?')})">${PHASE[ph]}</span>` : '';
+    };
+
+    // The client readiness gate (what delivery enforces), data quality and evidence completeness — all
+    // computed by the server from facts. Informational: nothing here is a form or a task for the operator.
+    const gatePanel = () => {
+      const d = data.alert || {};
+      const r = d.clientReadiness || {};
+      const q = d.quality || {};
+      const ev = d.evidenceCompleteness || {};
+      const state = r.state === 'visible' ? '<span class="b vis-shared">VISIBLE TO CLIENT</span>'
+        : r.state === 'ready' ? '<span class="b vis-ready_for_review">READY FOR CLIENT</span>' : '<span class="b vis-internal">NOT READY</span>';
+      const li = (c) => `<li class="${c.ok ? 'ok' : c.required === false ? 'info' : 'bad'}">${c.ok ? '✓' : c.required === false ? '?' : '⚠'} ${esc(c.label)}</li>`;
+      return `<div class="row" style="gap:6px">${state}</div>
+        ${r.reasons?.length ? `<ul class="qc">${r.reasons.map((x) => `<li class="bad">⚠ ${esc(x)}</li>`).join('')}</ul>` : ''}
+        <details class="rv-more"><summary class="muted">Data quality <b>${esc(String(q.state || 'unknown').toUpperCase())}</b> · Evidence <b>${esc(String(ev.state || 'unknown').toUpperCase())}</b> · all checks</summary>
+          <div class="section-title">Readiness gate</div><ul class="qc">${(r.checks || []).map(li).join('')}</ul>
+          <div class="section-title">Data quality</div><ul class="qc">${(q.checks || []).map(li).join('')}</ul>
+          <div class="section-title">Evidence</div><ul class="qc">${(ev.checks || []).map((c) => `<li class="${c.ok ? 'ok' : 'bad'}">${c.ok ? '✓' : '✗'} ${esc(c.label)}</li>`).join('')}</ul>
+          <div class="muted" style="font-size:11px;margin-top:6px">Informational — evidence completeness never decides VALID / INVALID.</div></details>`;
+    };
+
+    // Event story: related alerts on the same camera, the event group (same type, ≤ 10 min apart) and plain
+    // facts. A view over the raw alerts — nothing is merged or deleted; one review can cover the group.
+    const storySection = () => {
+      const s = data.story;
+      if (!s) return '';
+      const head = s.kind === 'repeated'
+        ? `REPEATED ACTIVITY · ${s.groupCount} alerts · ${fmt.time(s.groupFrom)}–${fmt.time(s.groupTo)} · same camera`
+        : s.relatedCount ? `${s.relatedCount} other alert${s.relatedCount === 1 ? '' : 's'} on this camera within ${s.windowMinutes} min`
+          : `No other alerts on this camera within ${s.windowMinutes} min`;
+      return `<details class="card rv-more rv-storycard" id="rv-story" ${s.kind === 'repeated' ? 'open' : ''}>
+        <summary class="card-h"><h3>${icon('history')} Event story</h3><div class="sub">${esc(head)}</div></summary>
+        <div class="card-b rv-story">
+          <div><div class="section-title" style="margin-top:0">Why this alert?</div><ul class="qc plain">${(s.why || []).map((w) => `<li>• ${esc(w)}</li>`).join('')}</ul>
+            ${s.kind === 'repeated' ? `<div class="muted" style="font-size:11.5px;margin-top:8px">${icon('layers', 's')} Event group <span class="mono">${esc(s.groupId)}</span> — one decision here covers what you see; the other alerts stay in the queue as their own records.</div>` : ''}</div>
+          <div><div class="section-title" style="margin-top:0">Timeline</div><ol class="tl">${(s.timeline || []).map((t) => `<li class="${t.current ? 'cur' : ''} ${t.inGroup ? 'grp' : ''}"><span class="num">${fmt.time(t.at)}</span>${t.current ? `<b>${esc(t.alarmTypeName || '')}</b> <span class="muted">this alert</span>` : `<a href="${reviewHref(t)}">${esc(t.alarmTypeName || t.alarmId)}</a>${t.inGroup ? ' <span class="muted">repeat</span>' : ''}`} ${decisionBadge(t.decision, t.decisionSource)}<span class="muted ev-av">${t.video ? icon('video', 's') : ''}${t.images ? icon('image', 's') : ''}</span></li>`).join('')}</ol></div>
+        </div></details>`;
     };
 
     const paint = () => {
@@ -226,8 +282,8 @@ export default {
           <div class="rv-head">
             <a class="btn icon" href="${queueHref()}" aria-label="Back to alerts (Esc)">${icon('left')}</a>
             <div class="grow" style="min-width:0">
-              <div class="rv-kicker"><span id="rv-live">${liveTag()}</span>${who.map((x) => `<span class="${/NOT MAPPED/.test(x) ? 'nm-miss' : ''}">${esc(x)}</span>`).join('<span class="sep">|</span>')}</div>
-              <div class="row" style="gap:8px" id="rv-title">${priorityBadge(a.priority)}<h2>${esc(a.alarmTypeName)}</h2>${decisionBadge(a.decision, a.decisionSource)}${ticketChip(data.ticket)}</div>
+              <div class="rv-kicker"><span id="rv-live">${liveTag()}</span>${data.alert?.source === 'stored' ? '<span class="live-tag delayed" title="This alert is not in the current Camview read (Camview unreachable, or it left the live window). Shown from the stored copy of the last data Camview sent.">STORED COPY</span>' : ''}${who.map((x) => `<span class="${/NOT MAPPED/.test(x) ? 'nm-miss' : ''}">${esc(x)}</span>`).join('<span class="sep">|</span>')}${phaseChip()}</div>
+              <div class="row" style="gap:8px" id="rv-title">${priorityBadge(a.priority)}<h2>${esc(a.alarmTypeName)}</h2>${decisionBadge(a.decision, a.decisionSource)}${ackBadge(a)}${ticketChip(data.ticket)}</div>
               <div class="rv-loc"><b class="mono">${esc(where(a))}</b>${cameraName(a) ? ` · ${esc(cameraName(a))}` : ''}</div>
               <div class="muted rv-sub"><span class="mono">${esc(a.alarmId)}</span>${a.alarmIdDerived ? ' <span class="prov derived" title="Camview sent this event without an alarm ID; the ID is built from its project, camera, type and first time">ID DERIVED</span>' : ''} ·${fmt.dt(a.firstInstance)}${a.lastInstance !== a.firstInstance ? ` → ${fmt.time(a.lastInstance)}` : ''} (${fmt.rel(a.lastInstance)})${a.totalTimesReported > 1 ? ` · reported <b>${a.totalTimesReported}×</b>` : ''}</div>
             </div>
@@ -245,6 +301,7 @@ export default {
             <aside class="stack">
               <section class="card"><div class="card-h"><h3>${icon('camera')} Camera &amp; recording</h3></div><div class="card-b">${healthPanel(a)}</div></section>
               <section class="card"><div class="card-h"><h3>${icon('share')} Client routing</h3><div class="sub">Automatic</div></div><div class="card-b" id="rv-ticket">${ticketPanel()}</div></section>
+              <section class="card"><div class="card-h"><h3>${icon('shield')} Client readiness</h3><div class="sub">Checked automatically</div></div><div class="card-b" id="rv-gate">${gatePanel()}</div></section>
               <section class="card"><div class="card-b"><dl class="kv" style="grid-template-columns:110px 1fr">
                 <dt>Camview status</dt><dd>${stateBadge(a.lastActionType, a.lastActionLabel)}</dd>
                 ${a.ticketId ? `<dt>Camview ticket</dt><dd>#${esc(a.ticketId)}</dd>` : ''}
@@ -253,6 +310,7 @@ export default {
               </dl></div></section>
             </aside>
           </div>
+          ${storySection()}
           <div class="rv-bar" id="rv-bar">${bar()}</div>
         </div>`;
       const own = data.evidence.length > 0;
@@ -271,6 +329,8 @@ export default {
 
     const repaintSide = () => {
       $('#rv-ticket', el).innerHTML = ticketPanel();
+      const gate = $('#rv-gate', el);
+      if (gate) gate.innerHTML = gatePanel();
       $('#rv-bar', el).innerHTML = bar();
     };
 
@@ -307,39 +367,81 @@ export default {
       busy = true;
       $$('[data-decide]', el).forEach((b) => { b.disabled = true; });
       try {
-        const r = await api.post(`/api/queue/${encodeURIComponent(a.alarmId)}/decide`, { result, note, clientId: clientId || null, projectId: a.projectId });
+        const r = await api.post(`/api/queue/${encodeURIComponent(a.alarmId)}/decide`, { result, note, clientId: clientId || null, projectId: a.projectId, expectedRevision: data.alert?.revision ?? 0 });
         if (ctx.isStale()) return;
         last = r;
         a.decision = result; a.decisionSource = 'operator';
         a.review = { ...(a.review || {}), ...(r.review || {}) };
         data.ticket = r.ticket;
+        if (r.alert) data.alert = r.alert;
         const qi = queueNav.items.find((x) => x.alarmId === a.alarmId);
         if (qi) qi.decision = result;
         busy = false;
         paintHeadBadges();
         repaintSide();
         const d = r.delivery?.status;
-        const done = result !== 'valid' || d === 'delivered' || d === 'not_deliverable' || (d === 'ready' && !data.can.send);
+        const done = result !== 'valid' || d === 'delivered' || d === 'queued' || d === 'not_deliverable' || (d === 'ready' && !data.can.send);
         if (done && pref('autoAdvance', true)) {
-          toast(`${RESULT_LABEL[result]}${r.ticket && result === 'valid' ? ` · ${r.ticket.ref}` : ''}${d === 'delivered' ? ' · delivered' : ''}`, 'success');
+          toast(`${RESULT_LABEL[result]}${r.ticket && result === 'valid' ? ` · ${r.ticket.ref}` : ''}${d === 'delivered' ? ' · delivered' : d === 'queued' ? ' · sending (retried automatically)' : ''}`, 'success');
           advanceTimer = setTimeout(goNext, 900);
         }
       } catch (e) {
         busy = false;
-        toast(e.code === 'remarks_required' ? 'A remark is required by policy' : e.message, 'error');
-        if (e.code === 'delivery_failed') {                      // decision saved, delivery not: show it, allow retry
-          a.decision = result; a.decisionSource = 'operator';
-          try { data.ticket = (await api.get(`/api/queue/${encodeURIComponent(a.alarmId)}`, { projectId: a.projectId })).ticket; } catch { /* keep */ }
-          paintHeadBadges();
+        // nothing was saved (the server answers only after the commit): the screen never shows a success here
+        toast(e.code === 'remarks_required' ? 'A remark is required by policy' : e.message, e.code === 'conflict' ? 'warning' : 'error');
+        if (e.code === 'conflict') {                              // someone else decided meanwhile: show the current state
+          try { applyFresh(await api.get(`/api/queue/${encodeURIComponent(a.alarmId)}`, { projectId: a.projectId })); } catch { /* keep */ }
         }
         repaintSide();
+      }
+    };
+
+    // ACKNOWLEDGE: "I have this alert". Who / when is recorded on the server; the decision stays pending and no
+    // revision moves, so a decision another operator makes meanwhile is never turned into a conflict by this.
+    const acknowledge = async () => {
+      if (busy || !data || data.alert?.acknowledgedAt || data.alarm.decision !== 'pending') return;
+      const a = data.alarm;
+      busy = true;
+      $$('[data-ack]', el).forEach((b) => { b.disabled = true; });
+      try {
+        const r = await api.post(`/api/queue/${encodeURIComponent(a.alarmId)}/acknowledge`, { projectId: a.projectId });
+        if (ctx.isStale()) return;
+        if (r.alert) data.alert = r.alert;
+        a.review = { ...(a.review || {}), acknowledgedBy: r.acknowledged?.by, acknowledgedAt: r.acknowledged?.at };
+        busy = false;
+        paintHeadBadges();
+        repaintSide();
+        toast(r.idempotent ? `Already acknowledged by ${r.acknowledged?.by || 'another reviewer'}` : 'Acknowledged — now decide: VALID, INVALID or EXCEPTION', 'success');
+      } catch (e) {
+        busy = false;
+        toast(e.message, 'error');
+        repaintSide();
+      }
+    };
+
+    // The current server state of THIS alert, applied without touching the evidence player (playback continues).
+    const applyFresh = (fresh, { announce = false } = {}) => {
+      const a = data.alarm;
+      const before = data.alert?.revision;
+      const ackBefore = data.alert?.acknowledgedAt;
+      Object.assign(a, { decision: fresh.alarm.decision, decisionSource: fresh.alarm.decisionSource, review: fresh.alarm.review });
+      data.alert = fresh.alert; data.ticket = fresh.ticket; data.publications = fresh.publications || data.publications;
+      const qi = queueNav.items.find((x) => x.alarmId === a.alarmId);
+      if (qi) qi.decision = a.decision;
+      last = null;
+      paintHeadBadges();
+      repaintSide();
+      if (announce && before !== fresh.alert?.revision && a.decisionSource === 'operator') {
+        toast(`${fresh.alarm.review?.by || 'Another reviewer'} marked this alert ${String(a.decision).toUpperCase()}`, 'info');
+      } else if (announce && !ackBefore && fresh.alert?.acknowledgedAt) {
+        toast(`${fresh.alert.acknowledgedBy || 'Another reviewer'} acknowledged this alert`, 'info');
       }
     };
 
     const paintHeadBadges = () => {
       const h = $('#rv-title', el);
       if (!h) return;
-      h.innerHTML = `${priorityBadge(data.alarm.priority)}<h2>${esc(data.alarm.alarmTypeName)}</h2>${decisionBadge(data.alarm.decision, data.alarm.decisionSource)}${ticketChip(data.ticket)}`;
+      h.innerHTML = `${priorityBadge(data.alarm.priority)}<h2>${esc(data.alarm.alarmTypeName)}</h2>${decisionBadge(data.alarm.decision, data.alarm.decisionSource)}${ackBadge(data.alarm)}${ticketChip(data.ticket)}`;
     };
 
     const send = async (clientId) => {
@@ -361,12 +463,12 @@ export default {
 
     const withdraw = async () => {
       const t = data.ticket;
-      const ok = await confirmDialog({ title: 'Withdraw from client?', message: `The client will no longer see ${esc(t.ref)}. The decision (VALID) and ticket stay.`, confirmLabel: 'Withdraw', danger: true });
+      const ok = await confirmDialog({ title: 'Revoke from the client?', message: `${esc(t.clientName || 'The client')} will no longer see ${esc(t.ref)}. It is not sent again automatically; you can send it again from here.`, confirmLabel: 'Revoke', danger: true });
       if (!ok) return;
       try {
         const r = await api.post(`/api/tickets/${t.id}/withdraw`, {});
         data.ticket = r.ticket; last = null;
-        toast('Withdrawn from the client view', 'success');
+        toast('Revoked from the client', 'success');
         repaintSide();
       } catch (e) { toast(e.message, 'error'); }
     };
@@ -374,6 +476,7 @@ export default {
     el.addEventListener('click', (e) => {
       const d = e.target.closest('[data-decide]');
       if (d) return decide(d.dataset.decide);
+      if (e.target.closest('[data-ack]')) return acknowledge();
       if (e.target.closest('[data-next]')) return goNext();
       if (e.target.closest('[data-send]')) return send();
       if (e.target.closest('[data-withdraw]')) return withdraw();
@@ -389,8 +492,9 @@ export default {
       const k = e.key.toLowerCase();
       if (k === ' ' && document.activeElement?.matches('button, a, input')) return;
       const pos = position();
-      if ((!data.manualReview || data.alarm.eventKind === 'camera_status') && ['v', 'i', 'e'].includes(k)) return;
-      if (k === 'v' && data.can.valid) decide('valid');
+      if ((!data.manualReview || data.alarm.eventKind === 'camera_status') && ['a', 'v', 'i', 'e'].includes(k)) return;
+      if (k === 'a') acknowledge();
+      else if (k === 'v' && data.can.valid) decide('valid');
       else if (k === 'i' && data.can.invalid) decide('invalid');
       else if (k === 'e' && data.can.exception) decide('exception');
       else if (k === 'n') goNext();
@@ -421,7 +525,8 @@ export default {
       try {
         const fresh = await api.get(`/api/queue/${encodeURIComponent(id)}`, { projectId });
         if (ctx.isStale() || busy) return;
-        if (JSON.stringify(fresh.ticket) !== JSON.stringify(data.ticket)) { data.ticket = fresh.ticket; $('#rv-ticket', el).innerHTML = ticketPanel(); }
+        if (fresh.alert?.revision !== data.alert?.revision || fresh.alert?.acknowledgedAt !== data.alert?.acknowledgedAt) applyFresh(fresh, { announce: true });
+        else if (JSON.stringify(fresh.ticket) !== JSON.stringify(data.ticket)) { data.ticket = fresh.ticket; $('#rv-ticket', el).innerHTML = ticketPanel(); }
       } catch { /* keep showing the last data */ }
     }));
 

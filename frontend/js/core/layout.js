@@ -354,6 +354,9 @@ function paintStatus() {
     if (state === 'delayed') text = `⚠ DATA DELAYED · Last successful update: ${age || '—'}`;
     if (state === 'disconnected') text = `✕ LIVE DATA DISCONNECTED${status.lastSuccessAt ? ' · last update ' + fmt.time(status.lastSuccessAt) : ''}`;
     if (state === 'connecting') text = 'Connecting…';
+    // truthful qualifiers: received but not stored, or only part of a very large project read per refresh
+    if (status.notPersisted?.length) text += ' · ⚠ NOT PERSISTED';
+    if (status.windowLimited?.length) text += ' · DATA WINDOW LIMITED';
   }
   dot.className = 'dot ' + (state === 'live' ? 'live' : state === 'delayed' ? 'delayed' : state === 'disconnected' ? 'disconnected' : '');
   txt.textContent = text;
@@ -423,16 +426,16 @@ function userMenu() {
       <div class="field"><label>Refresh interval</label><select class="select" id="pref-refresh">
         ${[5000, 10000, 15000, 30000, 60000, 120000, 180000].map((ms) => `<option value="${ms}" ${pref('refreshMs', 15000) === ms ? 'selected' : ''}>Every ${ms < 60000 ? ms / 1000 + ' seconds' : ms / 60000 + ' min'}</option>`).join('')}</select>
         <div class="hint">${status.push ? 'Push updates are connected: screens refresh the moment data changes. This interval is only the fallback check.' : 'How often the screen checks for changes when push updates are not available.'} Live data itself is read from Camview every ${Math.round((status.cacheSeconds || 30))} s.</div></div>
-      <div class="section-title">Change password</div>
+      ${session.noLogin ? `<div class="section-title">Access</div><div class="muted">Sign-in is switched off on this installation (single-user, this computer only).</div>` : `<div class="section-title">Change password</div>
       <div class="field"><label>Current password</label><input class="input" type="password" id="pw-cur" autocomplete="current-password"></div>
       <div class="field"><label>New password (min. ${session.passwordMin || 5} characters)</label><input class="input" type="password" id="pw-new" autocomplete="new-password"></div>
-      <div class="row"><button class="btn" id="pw-save">Change password</button><span class="grow"></span><button class="btn danger" id="logout">${icon('logout')} Sign out</button></div>
+      <div class="row"><button class="btn" id="pw-save">Change password</button><span class="grow"></span><button class="btn danger" id="logout">${icon('logout')} Sign out</button></div>`}
       <div class="section-title">Keyboard</div><div class="muted">Ctrl+K search · ? shortcuts · Esc closes dialogs · Enter opens a focused row</div>`,
   });
   $('#pref-refresh').addEventListener('change', (e) => { setPref('refreshMs', +e.target.value); restart(); toast(`Refresh every ${+e.target.value / 1000}s`); });
-  $('#pw-save').addEventListener('click', async () => {
+  $('#pw-save')?.addEventListener('click', async () => {
     try { await api.post('/api/auth/password', { current: $('#pw-cur').value, new: $('#pw-new').value }); toast('Password changed', 'success'); $('#pw-cur').value = $('#pw-new').value = ''; }
     catch (e) { toast(e.message, 'error'); }
   });
-  $('#logout').addEventListener('click', async () => { await api.post('/api/auth/logout'); location.hash = ''; location.reload(); });
+  $('#logout')?.addEventListener('click', async () => { await api.post('/api/auth/logout'); location.hash = ''; location.reload(); });
 }

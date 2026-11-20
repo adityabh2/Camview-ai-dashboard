@@ -7,9 +7,9 @@ import { locationLine, ackBadge, alertHref, clientThumb } from './common.js';
 
 export default {
   async render(el, ctx) {
-    setTitle('Shared Alerts', 'Alerts reviewed and shared with you');
+    setTitle('Alerts', 'Alerts delivered to your organisation');
     let q = { priority: '', ack: '', exam: '', search: '', ...ctx.query };
-    el.innerHTML = `<div class="page-head"><div><h2>Shared alerts</h2><p>Every alert delivered to your organisation, with its evidence.</p></div></div>
+    el.innerHTML = `<div class="page-head"><div><h2>Alerts</h2><p>Every alert delivered to your organisation, with its evidence. Open one to see the photo or video and acknowledge it.</p></div></div>
       <div class="filters">
         <input class="input" style="min-width:240px" id="ca-search" placeholder="Search alert ID, type or location" value="${esc(q.search)}" data-page-search>
         <select class="select" id="ca-exam" aria-label="Exam"><option value="">All exams</option></select>
@@ -42,7 +42,7 @@ export default {
           ],
           rows: r.items,
           onRow: (a) => { location.hash = alertHref(a); },
-          emptyHtml: empty('No shared alerts', (q.priority || q.ack || q.exam || q.search) ? 'Nothing matches these filters.' : 'No alert has been confirmed for your exams yet. Alerts appear here the moment the operations team marks them VALID.', 'share'),
+          emptyHtml: empty('No alerts', (q.priority || q.ack || q.exam || q.search) ? 'Nothing matches these filters.' : 'No alerts yet. Alerts from your exam centres appear here as soon as they are delivered to you.', 'share'),
         });
       } catch (e) {
         if (ctx.isStale()) return;

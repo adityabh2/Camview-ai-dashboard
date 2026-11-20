@@ -22,7 +22,7 @@ import notify
 import rbac
 import reports
 import workflow
-from camview_client import ApiError, list_page, validate_api_url
+from camview_client import ApiError, credential_kind, list_page, lookup_projects, validate_api_url
 from routes_common import body, project_label, project_param
 
 bp = Blueprint("admin", __name__)
@@ -283,6 +283,7 @@ def _client_out(c):
                                                    "GROUP BY status", (cid,))}
     return {"id": cid, "name": c["name"], "status": c["status"], "contact": c["contact"], "createdAt": c["created_at"],
             "projects": [r["project_id"] for r in db.rows("SELECT project_id FROM client_projects WHERE client_id=?", (cid,))],
+            "projectCodes": _client_codes(cid),
             "users": [{**u, "exams": [x["scope_value"] for x in db.rows(
                 "SELECT scope_value FROM user_scopes WHERE user_id=? AND scope_type='exam'", (u["id"],))]}
                 for u in db.rows("SELECT u.id, u.name, u.email, u.role_id AS roleId, r.name AS role, u.status, "
@@ -303,7 +304,8 @@ def clients_list():
     return jsonify({"clientRoles": db.rows("SELECT id, name FROM roles WHERE audience='client' ORDER BY name"),
                     "canManageLogins": "user.manage" in _user()["permissions"],
                     "items": [_client_out(c) for c in db.rows("SELECT * FROM clients ORDER BY name")],
-                    "projects": [project_label(p) for p in datasource.allowed_projects(_user())]})
+                    "projects": [project_label(p) for p in datasource.allowed_projects(_user())],
+                    "codes": [{"code": e["code"], "projectIds": e.get("projectIds", [])} for e in _codes_mod().entries()]})
 
 
 @bp.route("/api/clients", methods=["POST"])
@@ -314,15 +316,51 @@ def clients_create():
     name = str(b.get("name") or "").strip()
     if not name:
         raise ApiError("bad_request", "Client name is required.", 400)
+    if b.get("projectCodes"):
+        _codes_mod().resolve(b["projectCodes"], actor)   # an unknown code fails here, before the client exists
     cid = "client-" + uuid.uuid4().hex[:8]
     db.execute("INSERT INTO clients (id, name, status, contact, notification_prefs, visibility_policy, created_at) "
                "VALUES (?,?,?,?,?,?,?)", (cid, name, "active", str(b.get("contact") or ""),
                                           db.jdump(b.get("notificationPrefs") or {"inApp": True}),
                                           db.jdump(b.get("visibilityPolicy") or {"showTicket": False}), db.now_iso()))
-    _set_client_projects(cid, b.get("projects") or [], actor)
+    _set_client_projects(cid, _client_project_ids(cid, b), actor)
     db.audit("client.create", actor, "client", cid, None, {"name": name, "projects": b.get("projects") or []},
              client_id=cid)
     return jsonify({"id": cid})
+
+
+def _codes_mod():
+    import project_codes
+    return project_codes
+
+
+def _client_codes(cid):
+    return _codes_mod().client_codes(cid)
+
+
+def _client_project_ids(cid, b):
+    """A client is linked to project CODES (its own id for the exam), e.g. RAILTEL-J&K/JKSSB-AAE-FOC/151126/CCTV-AI/IIL.
+    The codes become Camview project ids here (unregistered codes are looked up first); "projects" may still carry
+    ids of projects that have no code."""
+    pc = _codes_mod()
+    codes = b.get("projectCodes")
+    if codes is None:
+        codes = _client_codes(cid)
+    if not isinstance(codes, list):
+        raise ApiError("bad_request", "projectCodes must be a list of project codes.", 400)
+    before = set(_client_codes(cid))
+    ids = pc.resolve(codes, _user())
+    kept = pc.set_client_codes(cid, codes)
+    # projects of a code the client was unlinked from go with it
+    dropped = {p for c in before - set(kept) for p in pc.project_ids(c)} - set(ids)
+    extra = b.get("projects")
+    if extra is None:
+        extra = [r["project_id"] for r in db.rows("SELECT project_id FROM client_projects WHERE client_id=?", (cid,))]
+    for p in extra:
+        p = str(p).strip()
+        if p and p not in ids and p not in dropped:
+            ids.append(p)
+    return ids
 
 
 def _set_client_projects(cid, projects, actor):
@@ -379,8 +417,8 @@ def clients_update(cid):
     if fields:
         db.execute(f"UPDATE clients SET {', '.join(f'{k}=?' for k in fields)} WHERE id=?", [*fields.values(), cid])
         db.audit("client.update", actor, "client", cid, {k: c.get(k) for k in fields}, fields, client_id=cid)
-    if b.get("projects") is not None:
-        _set_client_projects(cid, b["projects"], actor)
+    if b.get("projects") is not None or b.get("projectCodes") is not None:
+        _set_client_projects(cid, _client_project_ids(cid, b), actor)
     import tickets
     tickets.deliver_pending_valid()              # projects just mapped: pending VALID alerts can go out
     return jsonify(_client_out(db.one("SELECT * FROM clients WHERE id=?", (cid,))))
@@ -409,6 +447,10 @@ def settings_get():
         "policy": workflow.policy(), "policyDefaults": workflow.POLICY_DEFAULTS, "features": config.FEATURES,
         "mode": config.MODE,
         "connection": {"apiConfigured": bool(config.API_KEY), "apiUrl": config.API_URL,
+                       "apiKeyKind": credential_kind(config.API_KEY),
+                       "projectKeyConfigured": bool(config.PROJECT_API_KEY),
+                       "projectKeyKind": credential_kind(config.PROJECT_API_KEY or config.API_KEY),
+                       "projectLookupUrl": config.PROJECT_LOOKUP_URL,
                        "defaultProjectId": config.DEFAULT_PROJECT_ID or None, "timeout": config.TIMEOUT,
                        "windowPages": config.WINDOW_PAGES, "cacheSeconds": config.CACHE_SECONDS,
                        "setupAllowed": _setup_allowed() and "settings.manage" in user["permissions"]},
@@ -560,6 +602,89 @@ def settings_projects_discover():
     return jsonify(out)
 
 
+@bp.route("/api/settings/projects/lookup", methods=["POST"])
+@rbac.internal("settings.manage")
+def settings_projects_lookup():
+    """Project code (e.g. RAILTEL-J&K/JKSSB-AAE-FOC/151126/CCTV-AI/IIL) → the Camview projects carrying it,
+    through Camview's Project Lookup API. With "monitor": [ids] the chosen projects are also monitored and
+    given that code (still editable afterwards in the project list)."""
+    b = body()
+    code = str(b.get("code") or "").strip()
+    projects = lookup_projects(code)
+    monitored = set(datasource.all_project_ids())
+    for p in projects:
+        p["monitored"] = str(p["projectId"]) in monitored
+    applied = []
+    want = {str(x) for x in (b.get("monitor") or [])}
+    if want:
+        found = {str(p["projectId"]): p for p in projects}
+        unknown = want - set(found)
+        if unknown:
+            raise ApiError("bad_request", f"Project id(s) {', '.join(sorted(unknown))} are not linked to this code.", 400)
+        extras = [str(x) for x in (db.get_setting("extra_projects", []) or [])]
+        for pid in sorted(want, key=int):
+            if pid not in extras and pid not in monitored:
+                extras.append(pid)
+            nomenclature.set_project_code(pid, found[pid]["clientProjectId"] or code, found[pid].get("name"))
+            applied.append(pid)
+        datasource.ignore_auto(want, ignored=False)
+        db.set_setting("extra_projects", extras)
+        datasource.reset()
+        db.audit("settings.projects_lookup", _user(), "settings", "projects", None, {"code": code, "monitor": applied})
+        for p in projects:
+            p["monitored"] = p["monitored"] or str(p["projectId"]) in want
+    return jsonify({"code": code, "count": len(projects), "projects": projects, "applied": applied})
+
+
+def _code_entry(e):
+    return {"code": e["code"], "source": e.get("source"), "addedAt": e.get("addedAt"), "resolvedAt": e.get("resolvedAt"),
+            "error": e.get("error"), "projects": [{**project_label(p), "name": (e.get("names") or {}).get(p) or project_label(p).get("name")}
+                                                  for p in e.get("projectIds", [])]}
+
+
+@bp.route("/api/project-codes")
+@rbac.internal("live.view", "alarm.view", "settings.view", any_of=True)
+def project_codes_list():
+    """The registered project codes (code first: each code stands for every Camview project carrying it)."""
+    import project_codes
+    project_codes.refresh_soon()                       # picks up projects Camview added under a known code
+    return jsonify({"items": [_code_entry(e) for e in project_codes.entries()],
+                    "canManage": "settings.manage" in _user()["permissions"]})
+
+
+@bp.route("/api/project-codes", methods=["POST"])
+@rbac.internal("settings.manage")
+def project_codes_add():
+    import project_codes
+    e = project_codes.register(body().get("code"), _user())
+    return jsonify(_code_entry(e))
+
+
+@bp.route("/api/project-codes/remove", methods=["POST"])
+@rbac.internal("settings.manage")
+def project_codes_remove():
+    """POST with the code in the body: codes contain slashes, so they never go in the URL path."""
+    import project_codes
+    return jsonify(project_codes.unregister(body().get("code"), _user()))
+
+
+@bp.route("/api/project-codes/refresh", methods=["POST"])
+@rbac.internal("settings.manage")
+def project_codes_refresh():
+    import project_codes
+    project_codes.refresh(force=True)
+    return jsonify({"items": [_code_entry(e) for e in project_codes.entries()]})
+
+
+@bp.route("/api/config/test-lookup", methods=["POST"])
+@rbac.internal("settings.manage")
+def config_test_lookup():
+    started = time.time()
+    projects = lookup_projects(str(body().get("code") or ""))
+    return jsonify({"ok": True, "url": config.PROJECT_LOOKUP_URL, "latencyMs": int((time.time() - started) * 1000),
+                    "count": len(projects), "projectIds": [p["projectId"] for p in projects]})
+
+
 @bp.route("/api/settings/projects/auto-discover", methods=["POST"])
 @rbac.internal("settings.manage")
 def settings_projects_auto_discover():
@@ -586,7 +711,8 @@ def settings_projects():
     return jsonify({"projects": ids})
 
 
-_SETUP_FIELDS = {"apiUrl": "CAMVIEW_API_URL", "apiKey": "CAMVIEW_API_KEY", "projectId": "CAMVIEW_PROJECT_ID"}
+_SETUP_FIELDS = {"apiUrl": "CAMVIEW_API_URL", "apiKey": "CAMVIEW_API_KEY", "projectApiKey": "CAMVIEW_PROJECT_API_KEY",
+                 "projectId": "CAMVIEW_PROJECT_ID"}
 
 
 @bp.route("/api/config/setup", methods=["POST"])
@@ -602,11 +728,18 @@ def config_setup():
         if b.get(field) is None:
             continue
         value = str(b[field]).strip()
-        if field == "apiKey":
+        if field in ("apiKey", "projectApiKey"):
+            # "Bearer <token>" is kept as it is: a user login token must be sent WITH the Bearer prefix,
+            # a raw scoped key without it (camview_client.auth_header decides). Blank keeps the saved key.
+            if b.get(field + "Clear") and field == "projectApiKey":
+                updates[env_key] = ""
+                continue
             if not value:
                 continue
-            if value.lower().startswith("bearer "):
-                value = value[7:].strip()
+            if any(ch in value for ch in (chr(10), chr(13))):
+                raise ApiError("bad_request", "The key must be a single line.", 400)
+            if value[:7].lower() == "bearer ":
+                value = "Bearer " + value[7:].strip()
         updates[env_key] = value
     if updates.get("CAMVIEW_API_URL"):
         validate_api_url(updates["CAMVIEW_API_URL"])
@@ -618,8 +751,9 @@ def config_setup():
     config.apply()
     datasource.reset()
     db.audit("settings.connection", _user(), "settings", "connection", None,
-             {k: ("***" if k == "CAMVIEW_API_KEY" else v) for k, v in updates.items()})
-    return jsonify({"ok": True, "apiConfigured": bool(config.API_KEY), "apiUrl": config.API_URL})
+             {k: ("***" if k in ("CAMVIEW_API_KEY", "CAMVIEW_PROJECT_API_KEY") and v else v) for k, v in updates.items()})
+    return jsonify({"ok": True, "apiConfigured": bool(config.API_KEY), "apiUrl": config.API_URL,
+                    "apiKeyKind": credential_kind(config.API_KEY), "projectKeyConfigured": bool(config.PROJECT_API_KEY)})
 
 
 @bp.route("/api/config/test", methods=["POST"])
@@ -1167,3 +1301,42 @@ def reports_share(rid):
         notify.to_client(r["client_id"], "client", f"Report available: {r['title']}",
                          "A new report has been shared with you.", f"#/client/reports/{rid}", dedupe=f"report:{rid}")
     return jsonify({"ok": True, "shared": share})
+
+
+# ---------------------------------------------------------------------------
+# Operations health: counters, durable jobs, Camview circuit, alert store
+# ---------------------------------------------------------------------------
+
+@bp.route("/api/admin/metrics")
+@rbac.internal("settings.view")
+def ops_metrics():
+    """What failed since the process started, what is waiting in the durable queue, and whether each feed is
+    LIVE. Ids and counts only — no keys, links or personal data."""
+    import alert_store
+    import camview_client
+    import dq
+    import jobs
+    import obs
+    user = _user()
+    feeds = {p: datasource.freshness(datasource.refresh(p)) for p in datasource.allowed_projects(user)}
+    import backup
+    import health
+    bs = backup.status()
+    bs["newestAt"] = (bs.pop("newest") or {}).get("at")        # no file paths in the answer
+    return jsonify({"uptimeSeconds": obs.uptime_seconds(), "counters": obs.counters(), "jobs": jobs.summary(),
+                    "circuit": camview_client.breaker_state(), "feeds": feeds,
+                    "alertStore": {**alert_store.stats(), "persistence": dict(alert_store.HEALTH)},
+                    "dataQuality": dq.stored_counts(), "mode": config.MODE,
+                    "integrity": {k: v for k, v in db.INTEGRITY.items() if k != "path"},
+                    "backup": bs, "healthSource": health.status()})
+
+
+@bp.route("/api/admin/jobs/<int:job_id>/retry", methods=["POST"])
+@rbac.internal("settings.manage")
+def ops_job_retry(job_id):
+    import jobs
+    if not jobs.retry(job_id):
+        raise ApiError("not_eligible", "Only FAILED jobs can be retried.", 409)
+    db.audit("job.retry", _user(), "job", job_id)
+    return jsonify({"job": jobs.run(job_id)})
+

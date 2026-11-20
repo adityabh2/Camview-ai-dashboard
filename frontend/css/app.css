@@ -559,6 +559,9 @@ dl.kv dd{margin:0;min-width:0;overflow-wrap:anywhere;}
 .b.dec.v-valid{background:color-mix(in srgb,var(--v-valid) 16%,transparent);color:var(--v-valid);}
 .b.dec.v-invalid{background:color-mix(in srgb,var(--v-invalid) 16%,transparent);color:var(--v-invalid);}
 .b.dec.v-exception{background:color-mix(in srgb,var(--v-exception) 16%,transparent);color:var(--v-exception);}
+/* the ACKNOWLEDGE step: NOT ACKNOWLEDGED (nobody picked the alert up) · ACK · <who> */
+.b.ack-new{background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);font-size:9.5px;letter-spacing:.08em;height:17px;}
+.b.ack-ok{background:color-mix(in srgb,var(--v-valid) 10%,transparent);color:var(--text-2);font-size:10px;height:17px;}
 .select.sm{height:26px;font-size:12px;padding:0 6px;}
 .btn.disabled{opacity:.4;pointer-events:none;}
 
@@ -611,6 +614,8 @@ dl.kv dd{margin:0;min-width:0;overflow-wrap:anywhere;}
 .rv-dec .kbd,.rv-next .kbd{margin-left:6px;}
 .rv-dec .kbd{color:#fff;border-color:rgba(255,255,255,.55);background:rgba(0,0,0,.12);}
 .rv-dec.current{outline:3px solid var(--focus);outline-offset:2px;}
+.rv-ack{height:46px;font-size:13px;font-weight:800;letter-spacing:.04em;border-color:var(--accent);color:var(--accent);}
+.rv-ack .kbd{margin-left:6px;}
 .rv-next{height:46px;}
 .rv-foot{display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;align-items:center;}
 .rv-foot .check{font-size:11.5px;}
@@ -1088,3 +1093,85 @@ button.x-login:hover{border-color:var(--accent-line);color:var(--text);}
 .mon-evbar{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;font-size:12px;}
 
 .cl-del:hover{color:var(--st-critical);}
+
+/* ---- alert workspace: readiness / quality checklists, event story, operational views, exam phase */
+.q-views{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px;}
+.qc{list-style:none;margin:6px 0 0;padding:0;font-size:12px;line-height:1.55;}
+.qc li.ok{color:var(--st-good);}
+.qc li.bad{color:var(--st-warning);font-weight:600;}
+.qc li.info{color:var(--text-3);}
+.qc.plain li{color:var(--text);}
+.rv-more>summary{cursor:pointer;list-style:none;font-size:12px;}
+.rv-more>summary::-webkit-details-marker{display:none;}
+.rv-more>summary::before{content:'▸';display:inline-block;width:12px;color:var(--text-3);}
+.rv-more[open]>summary::before{content:'▾';}
+.rv-storycard>summary.card-h{display:flex;align-items:center;gap:10px;}
+.rv-storycard>summary.card-h h3{margin:0;}
+.rv-storycard>summary.card-h .sub{flex:1;}
+.rv-story{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:18px;}
+.tl{list-style:none;margin:6px 0 0;padding:0 0 0 12px;border-left:2px solid var(--border-strong);font-size:12.5px;}
+.tl li{padding:3px 0 3px 10px;position:relative;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+.tl li::before{content:'';position:absolute;left:-7px;top:11px;width:8px;height:8px;border-radius:50%;background:var(--border-strong);}
+.tl li.grp::before{background:var(--accent);}
+.tl li.cur{font-weight:700;}
+.tl li.cur::before{background:var(--st-warning);}
+.tl .num{font-family:var(--mono);color:var(--text-2);}
+.b.phase{font-size:10px;letter-spacing:.06em;}
+.b.phase-live_exam{color:var(--st-good);border-color:color-mix(in srgb,var(--st-good) 45%,transparent);}
+.b.phase-pre_exam{color:var(--st-info);border-color:color-mix(in srgb,var(--st-info) 45%,transparent);}
+.b.phase-post_exam{color:var(--text-3);}
+@media (max-width:900px){.rv-story{grid-template-columns:minmax(0,1fr);}}
+
+/* ============================== DASHBOARD MASTHEAD ============================== */
+/* The exam's project code is the headline; Camview only knows the number. */
+.dash-mast{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap;
+  padding:4px 0 18px;margin-bottom:16px;border-bottom:1px solid var(--border);}
+.dm-main{min-width:0;flex:1 1 420px;}
+.dm-kicker{display:flex;align-items:center;gap:12px;font-size:12px;margin-bottom:8px;}
+.dm-live{display:inline-flex;align-items:center;gap:7px;font-weight:600;color:var(--st-good);}
+.dm-live.is-delayed{color:var(--st-serious);}
+.dm-live .dot{width:7px;height:7px;}
+.dm-code{margin:0;font:750 clamp(20px,2.3vw,28px)/1.18 var(--font);letter-spacing:-.015em;color:var(--text);
+  display:flex;flex-wrap:wrap;align-items:baseline;column-gap:.32em;row-gap:2px;overflow-wrap:anywhere;}
+.dm-code span{white-space:nowrap;}
+.dm-code i{font-style:normal;font-weight:300;color:var(--text-3);}
+.dm-meta{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:8px;font-size:12.5px;color:var(--text-2);}
+.dm-meta b{color:var(--text-2);font-weight:600;}
+.dm-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.dm-sep{border:0;border-top:1px solid var(--border);margin:16px 0;}
+
+/* Verdict ribbon: proportions first, numbers underneath */
+.dash-ribbon{margin-bottom:16px;}
+.dr-bar{display:flex;gap:2px;height:10px;border-radius:5px;overflow:hidden;background:var(--panel-3);}
+.dr-bar span{display:block;min-width:3px;transition:flex-grow var(--t-med);}
+.dr-bar .dr-empty{flex:1;background:transparent;}
+.dr-keys{display:flex;flex-wrap:wrap;align-items:center;gap:6px 22px;margin-top:10px;font-size:12.5px;}
+.dr-key{display:inline-flex;align-items:center;gap:7px;color:var(--text-2);text-decoration:none;border-radius:var(--r-xs);padding:2px 0;}
+.dr-key:hover{color:var(--text);text-decoration:none;}
+.dr-key i{width:9px;height:9px;border-radius:2px;flex-shrink:0;}
+.dr-key b{color:var(--text);font-size:14px;font-weight:700;}
+.dr-total{margin-left:auto;}
+
+/* Project code dialog */
+.pc-results{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--r-m);overflow:hidden;margin-top:4px;}
+.pc-row{display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--panel-2);}
+.pc-row + .pc-row{border-top:1px solid var(--border);}
+
+@media (max-width:640px){
+  .dash-mast{align-items:flex-start;}
+  .dm-actions{width:100%;}
+  .dm-actions .btn{flex:1;justify-content:center;}
+  .dr-total{margin-left:0;width:100%;}
+}
+
+/* Code tabs: one tab per registered project code (code first) */
+.dash-mast{display:block;}
+.dm-top{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap;}
+.dm-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-top:16px;}
+.dm-tab{display:inline-flex;align-items:baseline;gap:6px;max-width:320px;padding:6px 12px;border-radius:999px;cursor:pointer;
+  border:1px solid var(--border);background:var(--panel);color:var(--text-2);font-weight:600;font-size:12.5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background var(--t-fast),border-color var(--t-fast);}
+.dm-tab .muted{font-weight:500;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;}
+.dm-tab:hover{border-color:var(--border-strong);color:var(--text);}
+.dm-tab.on{background:var(--accent-soft);border-color:var(--accent-line);color:var(--text);}
+.dm-tab.dm-add{border-style:dashed;color:var(--accent-2);align-items:center;}

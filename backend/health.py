@@ -49,9 +49,25 @@ CAMVIEW_STATES = {"SYNCED": ("online", "available"), "OFFLINE": ("offline", "una
                   "FAILED": ("unknown", "unavailable")}
 
 
+def push_configured():
+    return bool(os.environ.get("CAMVIEW_HEALTH_INGEST_TOKEN", "").strip())
+
+
+def push_reporting():
+    """A push source counts only when it actually REPORTED recently — a configured token alone proves nothing."""
+    if not push_configured():
+        return False
+    r = db.one("SELECT MAX(updated_at) AS last FROM camera_health WHERE source='push'")
+    age = _age(r["last"]) if r and r["last"] else None
+    return age is not None and age <= stale_seconds()
+
+
 def source_mode():
-    if os.environ.get("CAMVIEW_HEALTH_INGEST_TOKEN", "").strip():
+    """none | camview | push | push_not_reporting (a token is configured but no recent push data arrived)."""
+    if push_reporting():
         return "push"
+    if push_configured():
+        return "push_not_reporting"
     return "camview" if db.one("SELECT 1 FROM camera_health WHERE source='camview' LIMIT 1") else "none"
 
 
@@ -73,17 +89,19 @@ def _age(iso):
         return None
 
 
-def unavailable():
+def unavailable(not_reporting=False):
     return {"available": False, "source": "none",
-            "camera": {"state": "unknown", "lastHeartbeatAt": None},
+            "camera": {"state": "unknown", "lastHeartbeatAt": None, "lastFrameAt": None},
             "recording": {"state": "unknown", "lastRecordingAt": None},
-            "stream": {"state": "unknown"}, "lastEvent": None, "conditions": ["HEALTH_UNAVAILABLE"]}
+            "stream": {"state": "unknown"}, "lastEvent": None,
+            "conditions": ["HEALTH_UNAVAILABLE"] + (["HEALTH_SOURCE_NOT_REPORTING"] if not_reporting else [])}
 
 
-def _view(r):
-    """Row → public health view with explicit conditions. A stale heartbeat makes the camera UNKNOWN."""
+def _view(r, not_reporting=False):
+    """Row → public health view with explicit conditions. A stale heartbeat makes the camera UNKNOWN.
+    `not_reporting`: a push source is configured but silent — said explicitly, never shown as healthy."""
     if not r:
-        return unavailable()
+        return unavailable(not_reporting)
     cam, rec, stream = r["camera_state"] or "unknown", r["recording_state"] or "unknown", r["stream_state"] or "unknown"
     cond = []
     age = _age(r["last_heartbeat_at"])
@@ -107,9 +125,15 @@ def _view(r):
         cond.append("STREAM_AVAILABLE")
     elif stream == "unavailable":
         cond.append("STREAM_UNAVAILABLE")
+    if not_reporting:
+        cond.append("HEALTH_SOURCE_NOT_REPORTING")
+    keys = r.keys()
+    # the recording time comes only from a real recording source; Camview's frame sync is a CAMERA fact
+    last_rec = r["last_recording_at"] if (r["source"] or "push") != "camview" else None
     return {"available": True, "source": r["source"] or "push", "raw": raw,
-            "camera": {"state": cam, "lastHeartbeatAt": r["last_heartbeat_at"]},
-            "recording": {"state": rec, "lastRecordingAt": r["last_recording_at"]},
+            "camera": {"state": cam, "lastHeartbeatAt": r["last_heartbeat_at"],
+                       "lastFrameAt": r["last_frame_at"] if "last_frame_at" in keys else None},
+            "recording": {"state": rec, "lastRecordingAt": last_rec},
             "stream": {"state": stream}, "updatedAt": r["updated_at"],
             "lastEvent": {"type": r["last_event"], "at": r["last_event_at"]} if r["last_event"] else None,
             "conditions": cond}
@@ -126,7 +150,8 @@ def lookup(pairs):
         chunk = cams[i:i + 500]
         for r in db.rows(f"SELECT * FROM camera_health WHERE camera_id IN ({','.join('?' for _ in chunk)})", chunk):
             rows[(r["project_id"], r["camera_id"])] = r
-    return {k: _view(rows.get(k)) for k in pairs}
+    silent = push_configured() and not push_reporting()        # checked once per lookup, not per camera
+    return {k: _view(rows.get(k), silent) for k in pairs}
 
 
 def get(project_id, camera_id):
@@ -156,13 +181,14 @@ def ingest(records, source="push"):
         pid, cid = str(rec.get("projectId") or "").strip(), str(rec.get("cameraId") or "").strip()
         if not pid or not cid:
             raise ApiError("bad_request", "projectId and cameraId are required on every record.", 400)
+        last_rec = rec.get("lastRecordingAt") if source != "camview" else None     # Camview has no recording source
         clean.append((pid, cid, _state(rec.get("cameraState"), CAMERA_STATES),
                       _state(rec.get("recordingState"), RECORDING_STATES), _state(rec.get("streamState"), STREAM_STATES),
-                      rec.get("lastHeartbeatAt") or now, rec.get("lastRecordingAt"),
-                      (str(rec.get("rawStatus") or "").strip().upper() or None)))
+                      rec.get("lastHeartbeatAt") or now, last_rec,
+                      (str(rec.get("rawStatus") or "").strip().upper() or None), rec.get("lastFrameAt")))
     events = []
     with db.connect() as conn:
-        for pid, cid, cam, recst, stream, hb, last_rec, raw in clean:
+        for pid, cid, cam, recst, stream, hb, last_rec, raw, last_frame in clean:
             prev = conn.execute("SELECT camera_state, recording_state, last_event, last_event_at FROM camera_health "
                                 "WHERE project_id=? AND camera_id=?", (pid, cid)).fetchone()
             event, event_at = (prev["last_event"], prev["last_event_at"]) if prev else (None, None)
@@ -173,23 +199,28 @@ def ingest(records, source="push"):
             if event_at == now:
                 events.append({"projectId": pid, "cameraId": cid, "event": event})
             conn.execute("""INSERT INTO camera_health (project_id, camera_id, camera_state, recording_state, stream_state,
-                    last_heartbeat_at, last_recording_at, last_event, last_event_at, source, updated_at, raw_status)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                    last_heartbeat_at, last_recording_at, last_event, last_event_at, source, updated_at, raw_status,
+                    last_frame_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(project_id, camera_id) DO UPDATE SET camera_state=excluded.camera_state,
                     recording_state=excluded.recording_state, stream_state=excluded.stream_state,
                     last_heartbeat_at=excluded.last_heartbeat_at,
-                    last_recording_at=COALESCE(excluded.last_recording_at, camera_health.last_recording_at),
+                    last_recording_at=CASE WHEN excluded.source='camview' THEN NULL
+                                           ELSE COALESCE(excluded.last_recording_at, camera_health.last_recording_at) END,
                     last_event=excluded.last_event, last_event_at=excluded.last_event_at, source=excluded.source,
-                    updated_at=excluded.updated_at, raw_status=excluded.raw_status""",
-                         (pid, cid, cam, recst, stream, hb, last_rec, event, event_at, source, now, raw))
+                    updated_at=excluded.updated_at, raw_status=excluded.raw_status,
+                    last_frame_at=COALESCE(excluded.last_frame_at, camera_health.last_frame_at)""",
+                         (pid, cid, cam, recst, stream, hb, last_rec, event, event_at, source, now, raw, last_frame))
     return len(clean), events
 
 
 def sync_from_camview(project_id, items, reported_at=None):
     """Writes the camera connection Camview sent with the alarms of one project (the latest record
-    per camera). Recording is left UNKNOWN: Camview does not report it. A push source, when
-    configured, is authoritative and is never overwritten. Returns (saved, transition events)."""
-    if source_mode() == "push":
+    per camera). Recording is left UNKNOWN (and its time empty): Camview does not report it — lastFrameSync is
+    the camera's last frame, never a recording time. A push source that is REPORTING is authoritative and never
+    overwritten; a configured but silent one does not hide Camview's camera state (shown as not reporting).
+    Returns (saved, transition events)."""
+    if push_reporting():
         return 0, []
     latest = {}
     for a in items or []:
@@ -205,8 +236,8 @@ def sync_from_camview(project_id, items, reported_at=None):
     for cid, a in latest.items():
         cam, stream = CAMVIEW_STATES[a["frameSyncStatus"]]
         records.append({"projectId": str(project_id), "cameraId": cid, "cameraState": cam, "recordingState": "unknown",
-                        "streamState": stream, "lastHeartbeatAt": now, "lastRecordingAt": a.get("lastFrameSync"),
-                        "rawStatus": a["frameSyncStatus"]})
+                        "streamState": stream, "lastHeartbeatAt": now, "lastRecordingAt": None,
+                        "lastFrameAt": a.get("lastFrameSync"), "rawStatus": a["frameSyncStatus"]})
     saved, events = 0, []
     for i in range(0, len(records), 5000):
         n, ev = ingest(records[i:i + 5000], source="camview")
@@ -220,6 +251,9 @@ NOTES = {
                "refreshed with the live feed). Recording status is not reported by Camview: connect an NVR / VMS "
                "source (POST /api/camera-health/ingest) to get it.",
     "push": "A monitoring source is pushing camera and recording status to /api/camera-health/ingest.",
+    "push_not_reporting": "HEALTH SOURCE NOT REPORTING: CAMVIEW_HEALTH_INGEST_TOKEN is set but the monitoring source "
+                          "has sent nothing recently. Recording status is UNKNOWN; camera connection falls back to "
+                          "Camview's frameSyncStatus where available.",
     "none": "No camera status received yet. In live mode Camview's frameSyncStatus is imported automatically with "
             "the first refresh; a monitoring source can POST to /api/camera-health/ingest with the token set in "
             "CAMVIEW_HEALTH_INGEST_TOKEN.",
@@ -229,5 +263,7 @@ NOTES = {
 def status():
     r = db.one("SELECT COUNT(*) AS n, MAX(updated_at) AS last FROM camera_health")
     mode = source_mode()
-    return {"mode": mode, "camerasReporting": r["n"], "lastReportAt": r["last"],
+    last_push = db.one("SELECT MAX(updated_at) AS last FROM camera_health WHERE source='push'")["last"]
+    return {"mode": mode, "camerasReporting": r["n"], "lastReportAt": r["last"], "pushConfigured": push_configured(),
+            "pushReporting": mode == "push", "lastPushAt": last_push,
             "staleSeconds": stale_seconds(), "note": NOTES[mode]}

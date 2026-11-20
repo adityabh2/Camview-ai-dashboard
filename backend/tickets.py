@@ -17,8 +17,12 @@ Delivery reuses the existing publication model and client firewall, so the
 client sees only the client-safe view built by workflow.build_client_visible_alarm.
 """
 
+import logging
+
 import db
 import exams
+import jobs
+import obs
 import workflow
 from camview_client import ApiError
 
@@ -43,7 +47,10 @@ _SELECT = ("SELECT t.*, e.name AS exam_name, c.name AS client_name FROM tickets 
            "LEFT JOIN exams e ON e.id=t.exam_id LEFT JOIN clients c ON c.id=t.client_id")
 
 
-def for_alarm(alarm_id):
+def for_alarm(alarm_id, conn=None):
+    if conn is not None:
+        r = conn.execute(_SELECT + " WHERE t.alarm_id=?", (alarm_id,)).fetchone()
+        return _ticket_row(dict(r)) if r else None
     return _ticket_row(db.one(_SELECT + " WHERE t.alarm_id=?", (alarm_id,)))
 
 
@@ -62,39 +69,45 @@ def _snapshot(alarm, exam, clients):
     return snap
 
 
-def ensure_ticket(alarm, user, exam, client_id, clients):
+def ensure_ticket(alarm, user, exam, client_id, clients, conn=None):
     """Creates the alert's ticket once. Repeated calls (double click, retry,
-    reload, background sync) return the same ticket."""
+    reload, background sync) return the same ticket. With `conn` it joins the caller's transaction."""
+    if conn is None:
+        with db.connect() as own:
+            return ensure_ticket(alarm, user, exam, client_id, clients, own)
     now = db.now_iso()
-    with db.connect() as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO tickets (alarm_id, camview_ticket_id, exam_id, client_id, project_id, status, result, "
-            "validated_by, validated_by_id, validated_at, delivery_status, snapshot, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,'open','valid',?,?,?,NULL,?,?,?)",
-            (alarm["alarmId"], None if alarm.get("ticketId") is None else str(alarm.get("ticketId")),
-             exam["id"] if exam else None, client_id, str(alarm.get("projectId")), user["name"], user["id"], now,
-             db.jdump(_snapshot(alarm, exam, clients)), now, now))
-        row = conn.execute("SELECT id, ref, status FROM tickets WHERE alarm_id=?", (alarm["alarmId"],)).fetchone()
-        created = row["ref"] is None
-        if created:
-            conn.execute("UPDATE tickets SET ref=? WHERE id=?", (f"TKT-{row['id']:06d}", row["id"]))
-        elif row["status"] == "cancelled":       # re-validated after an earlier INVALID/EXCEPTION
-            conn.execute("UPDATE tickets SET status='open', result='valid', validated_by=?, validated_by_id=?, "
-                         "validated_at=?, client_id=COALESCE(?, client_id), delivery_status=NULL, delivery_note=NULL, "
-                         "updated_at=? WHERE id=?", (user["name"], user["id"], now, client_id, now, row["id"]))
-    t = for_alarm(alarm["alarmId"])
+    conn.execute(
+        "INSERT OR IGNORE INTO tickets (alarm_id, camview_ticket_id, exam_id, client_id, project_id, status, result, "
+        "validated_by, validated_by_id, validated_at, delivery_status, snapshot, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,'open','valid',?,?,?,NULL,?,?,?)",
+        (alarm["alarmId"], None if alarm.get("ticketId") is None else str(alarm.get("ticketId")),
+         exam["id"] if exam else None, client_id, str(alarm.get("projectId")), user["name"], user["id"], now,
+         db.jdump(_snapshot(alarm, exam, clients)), now, now))
+    row = conn.execute("SELECT id, ref, status FROM tickets WHERE alarm_id=?", (alarm["alarmId"],)).fetchone()
+    created = row["ref"] is None
+    if created:
+        conn.execute("UPDATE tickets SET ref=? WHERE id=?", (f"TKT-{row['id']:06d}", row["id"]))
+    elif row["status"] == "cancelled":           # re-validated after an earlier INVALID/EXCEPTION
+        conn.execute("UPDATE tickets SET status='open', result='valid', validated_by=?, validated_by_id=?, "
+                     "validated_at=?, client_id=COALESCE(?, client_id), delivery_status=NULL, delivery_note=NULL, "
+                     "updated_at=? WHERE id=?", (user["name"], user["id"], now, client_id, now, row["id"]))
+    t = for_alarm(alarm["alarmId"], conn)
     if created:
         db.audit("ticket.create", user, "ticket", t["ref"], None, {"alarm": alarm["alarmId"], "client": client_id,
                                                                     "exam": exam["id"] if exam else None},
-                 project_id=alarm.get("projectId"), client_id=client_id)
+                 project_id=alarm.get("projectId"), client_id=client_id, conn=conn)
     return t, created
 
 
-def _set_delivery(ticket_id, status, note=None, user=None, delivered=False):
+def _set_delivery(ticket_id, status, note=None, user=None, delivered=False, conn=None):
     now = db.now_iso()
-    db.execute("UPDATE tickets SET delivery_status=?, delivery_note=?, updated_at=?"
-               + (", delivered_at=?, delivered_by=?" if delivered else "") + " WHERE id=?",
-               (status, note, now, *((now, user["name"]) if delivered else ()), ticket_id))
+    sql = ("UPDATE tickets SET delivery_status=?, delivery_note=?, updated_at=?"
+           + (", delivered_at=?, delivered_by=?" if delivered else "") + " WHERE id=?")
+    params = (status, note, now, *((now, user["name"]) if delivered else ()), ticket_id)
+    if conn is not None:
+        conn.execute(sql, params)
+    else:
+        db.execute(sql, params)
 
 
 def _deliverable(alarm, client):
@@ -108,9 +121,10 @@ def _deliverable(alarm, client):
     return True, None
 
 
-def deliver(alarm, client, user, exam, how, quiet=False):
+def deliver(alarm, client, user, exam, how, quiet=False, dedupe=None):
     """Makes the alert visible to the client (a 'shared' publication built
-    from the policy defaults). No wizard, no manual composition."""
+    from the policy defaults). No wizard, no manual composition. Idempotent: delivering the same alert to the
+    same client again rewrites the same publication (and, with a `dedupe` key, never notifies twice)."""
     pol = workflow.policy()
     levels = pol["clientContextLevels"]
     images = alarm.get("imageUrls") or []
@@ -137,39 +151,73 @@ def deliver(alarm, client, user, exam, how, quiet=False):
         """, (alarm["alarmId"], client["id"], str(alarm.get("projectId")), user["name"], user["id"], now,
               user["name"], user["id"], now, user["name"], user["id"], now, summary, db.jdump(evidence),
               db.jdump(levels), db.jdump(snap), now))
-    db.audit("delivery." + how, user, "alarm", alarm["alarmId"], None, "delivered", alarm.get("projectId"), client["id"],
-             details={"evidenceShared": sum(1 for e in evidence if e["shared"]), "contextLevels": levels,
-                      "exam": exam["id"] if exam else None})
+        db.audit("delivery." + how, user, "alarm", alarm["alarmId"], None, "delivered", alarm.get("projectId"), client["id"],
+                 details={"evidenceShared": sum(1 for e in evidence if e["shared"]), "contextLevels": levels,
+                          "exam": exam["id"] if exam else None}, conn=conn)
     if quiet:
         return
     import notify
-    notify.to_client(client["id"], "client",
-                     ("Critical alert" if alarm.get("priority") == "critical" else "New alert")
-                     + f": {alarm.get('alarmTypeName')}" + (f" — {exam['name']}" if exam else ""),
-                     summary[:200], f"#/client/alerts/{alarm['alarmId']}", dedupe=f"delivered:{alarm['alarmId']}:{now}",
-                     severity="critical" if alarm.get("priority") == "critical" else "info")
+    try:                                    # the publication is committed: a notification problem never undoes it
+        notify.to_client(client["id"], "client",
+                         ("Critical alert" if alarm.get("priority") == "critical" else "New alert")
+                         + f": {alarm.get('alarmTypeName')}" + (f" — {exam['name']}" if exam else ""),
+                         summary[:200], f"#/client/alerts/{alarm['alarmId']}",
+                         dedupe=dedupe or f"delivered:{alarm['alarmId']}:{now}",
+                         severity="critical" if alarm.get("priority") == "critical" else "info")
+    except Exception:
+        obs.event("delivery.notify", "error", logging.WARNING, alarm_id=alarm["alarmId"],
+                  project_id=alarm.get("projectId"), client=client["id"])
+
+
+def _withdraw_in(conn, alarm_id, user, reason):
+    """Withdraws every client-visible publication of the alert inside the caller's transaction. Returns the
+    withdrawn rows (clients are notified after the commit — see _notify_withdrawn)."""
+    now = db.now_iso()
+    pubs = [dict(r) for r in conn.execute("SELECT client_id, status, project_id FROM publications WHERE alarm_id=? "
+                                          "AND status IN ('shared','approved','ready_for_review')", (alarm_id,)).fetchall()]
+    for p in pubs:
+        conn.execute("UPDATE publications SET status='withdrawn', withdrawn_by=?, withdrawn_at=?, withdraw_reason=?, "
+                     "updated_at=? WHERE alarm_id=? AND client_id=?", (user["name"], now, reason, now, alarm_id, p["client_id"]))
+        db.audit("delivery.withdraw", user, "alarm", alarm_id, p["status"], "withdrawn", p["project_id"], p["client_id"],
+                 note=reason, conn=conn)
+    return pubs
+
+
+def _notify_withdrawn(alarm_id, pubs):
+    import notify
+    now = db.now_iso()
+    for p in pubs:
+        if p["status"] == "shared":
+            notify.to_client(p["client_id"], "client", f"Alert withdrawn: {alarm_id}",
+                             "An alert previously sent to you is no longer valid and has been withdrawn.",
+                             "#/client/alerts", dedupe=f"withdrawn:{alarm_id}:{now}")
 
 
 def withdraw_delivery(alarm_id, user, reason):
     """Removes client visibility (e.g. an alert re-classified as INVALID)."""
-    now = db.now_iso()
-    pubs = db.rows("SELECT client_id, status, project_id FROM publications WHERE alarm_id=? "
-                   "AND status IN ('shared','approved','ready_for_review')", (alarm_id,))
-    for p in pubs:
-        db.execute("UPDATE publications SET status='withdrawn', withdrawn_by=?, withdrawn_at=?, withdraw_reason=?, "
-                   "updated_at=? WHERE alarm_id=? AND client_id=?", (user["name"], now, reason, now, alarm_id, p["client_id"]))
-        db.audit("delivery.withdraw", user, "alarm", alarm_id, p["status"], "withdrawn", p["project_id"], p["client_id"],
-                 note=reason)
-        if p["status"] == "shared":
-            import notify
-            notify.to_client(p["client_id"], "client", f"Alert withdrawn: {alarm_id}",
-                             "An alert previously sent to you is no longer valid and has been withdrawn.",
-                             "#/client/alerts", dedupe=f"withdrawn:{alarm_id}:{now}")
+    with db.connect() as conn:
+        pubs = _withdraw_in(conn, alarm_id, user, reason)
+    _notify_withdrawn(alarm_id, pubs)
     return len(pubs)
 
 
-def decide(alarm, user, result, note=None, client_id=None):
-    """The one human action. Returns what the system did automatically."""
+STATUS_OF = {"valid": "marked_valid", "invalid": "marked_invalid", "exception": "marked_exception"}
+DECISION_OF = {v: k for k, v in STATUS_OF.items()}
+DELIVERY_JOB = "deliver_ticket"
+
+
+def decide(alarm, user, result, note=None, client_id=None, expected_revision=None):
+    """The one human action. Returns what the system did automatically.
+
+    Durable and safe to repeat:
+      * the decision, the ticket, the withdrawal of an earlier delivery and the delivery INTENT (a durable job)
+        are committed in ONE transaction — there is no state where the screen says "saved" and the database
+        does not agree, and no "valid but nobody will deliver it";
+      * optimistic concurrency: `expected_revision` is the review revision the operator was looking at. If
+        someone else decided differently since, the answer is 409 `conflict` with the current decision —
+        never a silent overwrite;
+      * the same decision again (double click, retry, reload, a second operator agreeing) is idempotent: no new
+        revision, no duplicate ticket, no duplicate delivery (`idempotent: true`)."""
     if result not in RESULTS:
         raise ApiError("bad_request", "Result must be valid, invalid or exception.", 400)
     if PERMS[result] not in user["permissions"]:
@@ -183,67 +231,190 @@ def decide(alarm, user, result, note=None, client_id=None):
                                             "Manual review is turned off (Settings › Workflow).", 409)
     if pol.get("requireRemarks") and not (note or "").strip():
         raise ApiError("remarks_required", "Your administrator requires a remark for every decision.", 400)
+    if expected_revision not in (None, ""):
+        try:
+            expected_revision = int(expected_revision)
+        except (TypeError, ValueError):
+            raise ApiError("bad_request", "expectedRevision must be a number.", 400)
+    else:
+        expected_revision = None
+    aid = alarm["alarmId"]
     exam = exams.resolve(alarm.get("projectId"), alarm.get("firstInstance"))
     clients = [c for c in exams.clients_for(alarm.get("projectId"), exam)]
-    review = db.apply_action(alarm["alarmId"], RESULTS[result], user["name"], note, snapshot=_snapshot(alarm, exam, clients),
-                             user=user, project_id=alarm.get("projectId"))
-    out = {"result": result, "review": review, "exam": exam, "clients": clients, "ticket": None,
-           "delivery": {"status": "none"}}
-
-    if result != "valid":
-        t = for_alarm(alarm["alarmId"])
-        if t and t["status"] != "cancelled":
-            db.execute("UPDATE tickets SET status='cancelled', result=?, delivery_status='withdrawn', updated_at=? WHERE id=?",
-                       (result, db.now_iso(), t["id"]))
-            withdrawn = withdraw_delivery(alarm["alarmId"], user, f"Re-classified as {result.upper()}")
-            db.audit("ticket.cancel", user, "ticket", t["ref"], "open", "cancelled", alarm.get("projectId"),
-                     note=f"Alert re-classified as {result}")
-            out["delivery"] = {"status": "withdrawn", "withdrawn": withdrawn}
-        out["ticket"] = for_alarm(alarm["alarmId"])
-        return out
-
-    # ---- VALID -------------------------------------------------------------
+    if not exam:
+        obs.count("mapping.failure")
     chosen = None
-    if client_id:
-        chosen = next((c for c in clients if c["id"] == client_id), None)
-        if not chosen:
-            raise ApiError("bad_request", "That client is not mapped to this alert's exam/project.", 400)
-    elif len(clients) == 1:
-        chosen = clients[0]
-    ticket, created = ensure_ticket(alarm, user, exam, chosen["id"] if chosen else None, clients)
-    out["ticketCreated"] = created
+    if result == "valid":
+        if client_id:
+            chosen = next((c for c in clients if c["id"] == client_id), None)
+            if not chosen:
+                raise ApiError("bad_request", "That client is not mapped to this alert's exam/project.", 400)
+        elif len(clients) == 1:
+            chosen = clients[0]
+    target = STATUS_OF[result]
+    snapshot = _snapshot(alarm, exam, clients)
+    out = {"result": result, "exam": exam, "clients": clients, "ticket": None, "delivery": {"status": "none"},
+           "idempotent": False}
+    withdrawn, job_id, notify_ready = [], None, None
 
-    if ticket["deliveryStatus"] == "delivered":          # idempotent: already delivered
-        out["delivery"] = {"status": "delivered", "clientId": ticket["clientId"]}
-    elif len(clients) > 1 and not chosen:
-        _set_delivery(ticket["id"], "needs_client", "This exam/project maps to more than one client — choose one.")
-        out["delivery"] = {"status": "needs_client", "options": clients}
-    else:
-        ok, why = _deliverable(alarm, chosen)
-        if not ok:
-            _set_delivery(ticket["id"], "not_deliverable", why)
-            out["delivery"] = {"status": "not_deliverable", "reason": why}
-        elif pol.get("deliveryMode", "controlled") == "automatic":
-            try:
-                deliver(alarm, chosen, user, exam, "auto")
-            except Exception:
-                import logging
-                logging.getLogger("camview.tickets").exception("Client delivery failed for %s", alarm["alarmId"])
-                _set_delivery(ticket["id"], "failed", "Delivery to the client failed — retry.")
-                raise ApiError("delivery_failed", f"VALID was saved and ticket {ticket['ref']} exists, but delivery to "
-                                                  f"{chosen['name']} failed. Press VALID again (or Send) to retry.", 502)
-            _set_delivery(ticket["id"], "delivered", None, user, delivered=True)
-            out["delivery"] = {"status": "delivered", "clientId": chosen["id"], "clientName": chosen["name"]}
+    with db.connect(immediate=True) as conn:       # read-check-write under the write lock: no interleaving
+        cur = db.get_review(aid, conn)
+        same = cur["status"] == target
+        if expected_revision is not None and expected_revision != cur["revision"] and not same:
+            obs.event("alert.decide", "conflict", alarm_id=aid, project_id=alarm.get("projectId"), user=user,
+                      expected=expected_revision, current=cur["revision"])
+            obs.count("validation.conflict")
+            current = DECISION_OF.get(cur["status"], "pending")
+            raise ApiError("conflict", f"{cur['updatedBy'] or 'Someone'} changed this alert to "
+                                       f"{current.upper()} while you were reviewing it. Your decision was not saved — "
+                                       f"check the current state and decide again.", 409,
+                           details={"current": {"decision": current, "by": cur["updatedBy"], "at": cur["updatedAt"],
+                                                "revision": cur["revision"]}, "expectedRevision": expected_revision})
+        if same:
+            out["idempotent"] = True                # nothing new to record; the rest below is idempotent anyway
+            review = cur
         else:
-            _set_delivery(ticket["id"], "ready", f"Ready to send to {chosen['name']}")
+            review = db.apply_action(aid, RESULTS[result], user["name"], note, snapshot=snapshot, user=user,
+                                     project_id=alarm.get("projectId"), conn=conn)
+        out["review"] = review
+
+        if result != "valid":
+            t = for_alarm(aid, conn)
+            if t and t["status"] != "cancelled":
+                conn.execute("UPDATE tickets SET status='cancelled', result=?, delivery_status='withdrawn', updated_at=? "
+                             "WHERE id=?", (result, db.now_iso(), t["id"]))
+                withdrawn = _withdraw_in(conn, aid, user, f"Re-classified as {result.upper()}")
+                db.audit("ticket.cancel", user, "ticket", t["ref"], "open", "cancelled", alarm.get("projectId"),
+                         note=f"Alert re-classified as {result}", conn=conn)
+                out["delivery"] = {"status": "withdrawn", "withdrawn": len(withdrawn)}
+            out["ticket"] = for_alarm(aid, conn)
+        else:
+            ticket, created = ensure_ticket(alarm, user, exam, chosen["id"] if chosen else None, clients, conn)
+            out["ticketCreated"] = created
+            if chosen and ticket["clientId"] != chosen["id"] and ticket["deliveryStatus"] != "delivered":
+                conn.execute("UPDATE tickets SET client_id=? WHERE id=?", (chosen["id"], ticket["id"]))
+            if ticket["deliveryStatus"] == "delivered":          # idempotent: already delivered
+                out["delivery"] = {"status": "delivered", "clientId": ticket["clientId"], "clientName": ticket["clientName"]}
+            elif len(clients) > 1 and not chosen:
+                _set_delivery(ticket["id"], "needs_client", "This exam/project maps to more than one client — choose one.",
+                              conn=conn)
+                out["delivery"] = {"status": "needs_client", "options": clients}
+            else:
+                ok, why = _deliverable(alarm, chosen)
+                if not ok:
+                    _set_delivery(ticket["id"], "not_deliverable", why, conn=conn)
+                    out["delivery"] = {"status": "not_deliverable", "reason": why}
+                    if not chosen:
+                        obs.count("mapping.failure")
+                elif pol.get("deliveryMode", "controlled") == "automatic":
+                    # the delivery intent is durable: committed with the decision, executed right after the commit
+                    # and, if that fails, retried by the job worker (also after a restart)
+                    job_id = jobs.enqueue(DELIVERY_JOB, {
+                        "alarmId": aid, "projectId": str(alarm.get("projectId")), "ticketId": ticket["id"],
+                        "clientId": chosen["id"], "examId": exam["id"] if exam else None, "revision": review["revision"],
+                        "by": {"id": user["id"], "name": user["name"]}, "how": "auto"},
+                        dedupe_key=f"deliver:{aid}:r{review['revision']}:{chosen['id']}", conn=conn, rearm=True)
+                    if ticket["deliveryStatus"] not in ("queued",):
+                        _set_delivery(ticket["id"], "queued", f"Sending to {chosen['name']}…", conn=conn)
+                    out["delivery"] = {"status": "queued", "clientId": chosen["id"], "clientName": chosen["name"]}
+                else:
+                    _set_delivery(ticket["id"], "ready", f"Ready to send to {chosen['name']}", conn=conn)
+                    out["delivery"] = {"status": "ready", "clientId": chosen["id"], "clientName": chosen["name"]}
+                    notify_ready = chosen
+    # ---- committed. Everything below is best effort and never changes what was decided.
+    obs.event("alert.decide", "ok", alarm_id=aid, project_id=alarm.get("projectId"), user=user, result=result,
+              revision=out["review"]["revision"], idempotent=out["idempotent"] or None)
+    try:
+        if withdrawn:
+            _notify_withdrawn(aid, withdrawn)
+        if notify_ready and not out["idempotent"]:
             import notify
-            notify.to_permission("alarm.publish", "client", f"Ready for {chosen['name']}: {alarm['alarmId']}",
+            notify.to_permission("alarm.publish", "client", f"Ready for {notify_ready['name']}: {aid}",
                                  f"{alarm.get('alarmTypeName')} validated by {user['name']} — one click to send.",
                                  "#/tickets?delivery=ready", project_id=alarm.get("projectId"),
-                                 dedupe=f"ready:{alarm['alarmId']}", exclude=user["id"])
-            out["delivery"] = {"status": "ready", "clientId": chosen["id"], "clientName": chosen["name"]}
-    out["ticket"] = for_alarm(alarm["alarmId"])
+                                 dedupe=f"ready:{aid}", exclude=user["id"])
+    except Exception:
+        # the decision is committed: a notification problem must not turn it into an error on screen
+        # (the operator would believe nothing was saved)
+        obs.event("alert.decide.notify", "error", logging.WARNING, alarm_id=aid, project_id=alarm.get("projectId"),
+                  user=user)
+    if result == "valid" and out["delivery"].get("status") == "queued":
+        job_id = job_id or (jobs.by_key(f"deliver:{aid}:r{out['review']['revision']}:{out['delivery']['clientId']}")
+                            or {}).get("id")
+        try:
+            job = jobs.run(job_id) if job_id else None
+        except Exception:
+            # the decision and its delivery intent are committed; the worker runs the job (never a false failure)
+            obs.event("alert.decide.deliver_now", "deferred", logging.WARNING, alarm_id=aid,
+                      project_id=alarm.get("projectId"), user=user)
+            job = jobs.get(job_id) if job_id else None
+        t = for_alarm(aid)
+        if t and t["deliveryStatus"] == "delivered":
+            out["delivery"] = {"status": "delivered", "clientId": t["clientId"], "clientName": t["clientName"]}
+        elif job and job["status"] in (jobs.RETRY, jobs.PENDING, jobs.RUNNING):
+            out["delivery"].update(status="queued", retrying=True,
+                                   reason="Delivery to the client did not complete yet; it is retried automatically.",
+                                   nextAttemptAt=job["nextRunAt"])
+        elif t:
+            out["delivery"] = {"status": t["deliveryStatus"], "reason": t["deliveryNote"], "clientId": t["clientId"],
+                               "clientName": t["clientName"]}
+    out["ticket"] = for_alarm(aid)
     return out
+
+
+def _fault(name):
+    """Failure injection for the browser end-to-end tests (e.g. a restart during delivery). Inert unless the
+    process was started with CAMVIEW_FAULTS=<name>[,…] — never set in production."""
+    import os
+    if name in (os.environ.get("CAMVIEW_FAULTS") or "").split(","):
+        raise ConnectionError(f"injected fault: {name}")
+
+
+def _delivery_failed(p, error):
+    """The delivery job gave up: the ticket says so (and deliver_pending_valid / Send can pick it up again)."""
+    t = for_alarm(p.get("alarmId"))
+    if t and t["status"] == "open" and t["deliveryStatus"] == "queued":
+        _set_delivery(t["id"], "failed", f"Delivery failed after several attempts: {str(error)[:160]}")
+
+
+@jobs.handler(DELIVERY_JOB, on_failed=_delivery_failed)
+def _run_delivery(p, job):
+    """Durable client delivery of an operator-VALID alert. Re-checks everything at execution time (the decision
+    may have changed, the client mapping may have changed) so a retried job can never publish to the wrong
+    client or publish an alert that is no longer VALID. Idempotent."""
+    import alert_service
+    aid = p["alarmId"]
+    t = for_alarm(aid)
+    if not t or t["status"] != "open" or t["id"] != p["ticketId"]:
+        raise jobs.Permanent("the ticket is no longer open (the decision was changed)")
+    rv = db.get_review(aid)
+    if rv["status"] != "marked_valid" or rv["revision"] != p["revision"]:
+        raise jobs.Permanent("superseded by a later decision")
+    if t["deliveryStatus"] == "delivered" and t["clientId"] == p["clientId"]:
+        return {"alreadyDelivered": True}
+    alarm = alert_service.resolve_system(aid, p["projectId"])
+    if not alarm:
+        raise RuntimeError("the alert record is not available yet")           # retried: the feed / store may be back
+    exam = exams.resolve(alarm.get("projectId"), alarm.get("firstInstance"))
+    clients = exams.clients_for(alarm.get("projectId"), exam)
+    client = next((c for c in clients if c["id"] == p["clientId"]), None)
+    if not client:
+        obs.count("mapping.failure")
+        _set_delivery(t["id"], "not_deliverable", "The client is no longer mapped to this alert's exam/project.")
+        raise jobs.Permanent("client no longer mapped to the alert's exam / project")
+    ok, why = _deliverable(alarm, client)
+    if not ok:
+        _set_delivery(t["id"], "not_deliverable", why)
+        return {"notDeliverable": why}
+    by = p.get("by") or {"id": None, "name": "Operations"}
+    _fault("delivery_fail")
+    try:
+        deliver(alarm, client, by, exam, p.get("how") or "auto", dedupe=f"delivered:{aid}:job{job['id']}")
+    except Exception:
+        obs.count("delivery.failure")
+        raise
+    _set_delivery(t["id"], "delivered", None, by, delivered=True)
+    return {"delivered": client["id"]}
 
 
 def send(ticket_id, user, alarm, client_id=None):
@@ -333,14 +504,19 @@ def auto_sync(items):
     pol = workflow.policy()
     if not pol.get("autoShareValid") or not items or pol.get("clientsSeeOperatorValidOnly", True):
         return 0, 0                          # only an operator's VALID delivers (decide()); nothing automatic
-    arrival = pol.get("deliveryTrigger") == "arrival"
+    every = pol.get("deliveryTrigger") == "all"       # CAMVIEW_CLIENT_DELIVERY=all
+    arrival = every or pol.get("deliveryTrigger") == "arrival"
 
     def wanted(a):
         if a.get("eventKind") == "camera_status":
             return False
+        if every:
+            return True                       # every detection alert, whatever its Camview status
         return a.get("lastActionType") in (0, 1) if arrival else a.get("lastActionType") == 1
 
     def dropped(a):
+        if every:
+            return False                      # only an administrator revokes (Withdraw); never automatic
         return a.get("lastActionType") in (2, 3) if arrival else a.get("lastActionType") != 1
     from datetime import datetime, timedelta, timezone
     hours = pol.get("autoShareHours")

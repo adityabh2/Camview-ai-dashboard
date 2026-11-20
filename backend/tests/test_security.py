@@ -89,6 +89,7 @@ def test_hidden_and_missing_records_look_identical(client_a):
     withdrawn = db.one("SELECT alarm_id FROM publications WHERE client_id='client-a' AND status='withdrawn'")["alarm_id"]
     s1, b1 = client_a.get(f"/api/client/alerts/{withdrawn}")
     s2, b2 = client_a.get("/api/client/alerts/ALM-DOES-NOT-EXIST")
+    b1.pop("requestId"), b2.pop("requestId")               # the correlation id differs per request, nothing else
     assert (s1, b1) == (s2, b2) == (404, {"error": "not_found", "message": "Alert not available."})
 
 
@@ -132,8 +133,8 @@ def test_unshared_evidence_is_not_served(client_a, monkeypatch):
         def iter_content(self, n):
             yield b"img"
 
-    import routes_client
-    monkeypatch.setattr(routes_client.requests, "get", lambda url, **kw: served.append(url) or FakeResp())
+    import requests
+    monkeypatch.setattr(requests, "get", lambda url, **kw: served.append(url) or FakeResp())
     ok = next(e for e in items if e["shared"])
     r = client_a.c.get(f"/api/client/evidence/{aid}/{ok['kind']}/{ok['index']}")
     assert r.status_code == 200 and r.mimetype == "image/svg+xml" and b"DEMO EVIDENCE" in r.data
@@ -145,7 +146,11 @@ def test_unshared_evidence_is_not_served(client_a, monkeypatch):
 
 def test_demo_evidence_frames_are_internal_and_demo_only(supervisor, client_a, client):
     a = supervisor.get("/api/alarms?projectId=7&quick=evidence&size=1")[1]["items"][0]
-    url = supervisor.get(f"/api/alarms/{a['alarmId']}?projectId=7")[1]["evidenceItems"][0]["url"]
+    link = supervisor.get(f"/api/alarms/{a['alarmId']}?projectId=7")[1]["evidenceItems"][0]["url"]
+    assert link.startswith(f"/api/media/{a['alarmId']}/")        # resolved on demand, never a stored link
+    assert client_a.c.get(link).status_code == 404               # internal endpoint: behind the audience wall
+    assert client.c.get(link).status_code == 401
+    url = supervisor.c.get(link).headers["Location"]
     assert url.startswith("/demo-evidence/")
     r = supervisor.c.get(url)
     assert r.status_code == 200 and b"SYNTHETIC FRAME" in r.data and b"<script" not in r.data

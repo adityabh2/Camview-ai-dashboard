@@ -56,13 +56,31 @@ def to_users(user_ids, category, title, body=None, link=None, dedupe=None, sever
                          (uid, category, title[:200], (body or "")[:1000], link, now, dedupe, severity))
 
 
+_users_cache = {"key": None, "users": []}
+_USERS_SIGNATURE = ("SELECT (SELECT group_concat(id||':'||status||':'||role_id||':'||COALESCE(client_id,'')||':'||"
+                    "COALESCE(pw_changed_at,'')) FROM users) || '|' || (SELECT group_concat(role_id||permission) FROM "
+                    "role_permissions) || '|' || (SELECT group_concat(user_id||scope_type||scope_value) FROM user_scopes)"
+                    " || '|' || (SELECT group_concat(id||status) FROM clients) || '|' || "
+                    "(SELECT COUNT(*) FROM client_projects) AS sig")
+
+
 def _active_users():
+    """Every active user with permissions and scope. Loading a user takes several queries, and one refresh can
+    raise many notifications: the result is reused while users, roles, scopes and clients are unchanged (one
+    cheap signature query per call instead of reloading everyone)."""
+    import hashlib
+
     import rbac
+    sig = db.one(_USERS_SIGNATURE)["sig"] or ""
+    key = (db.DB_PATH, hashlib.sha1(sig.encode()).hexdigest())
+    if _users_cache["key"] == key:
+        return _users_cache["users"]
     out = []
     for r in db.rows("SELECT id FROM users WHERE status='active'"):
         u = rbac.load_user(r["id"])
         if u:
             out.append(u)
+    _users_cache.update(key=key, users=out)
     return out
 
 

@@ -13,7 +13,8 @@ services:
       - CAMVIEW_API_URL=${CAMVIEW_API_URL:-https://default.prod.api.camviewai.com/alarms/listAlarms}
       - CAMVIEW_PROJECT_ID=${CAMVIEW_PROJECT_ID:-}
       - CAMVIEW_PROJECT_CODES=${CAMVIEW_PROJECT_CODES:-}
-      - CAMVIEW_DELIVERY_TRIGGER=${CAMVIEW_DELIVERY_TRIGGER:-arrival}
+      # clients see only alerts the operations team marked VALID (core rule); "arrival" is no longer honoured
+      - CAMVIEW_DELIVERY_TRIGGER=${CAMVIEW_DELIVERY_TRIGGER:-valid}
       - CAMVIEW_EXCLUDED_PROJECTS=${CAMVIEW_EXCLUDED_PROJECTS:-}
       - CAMVIEW_ALARM_TYPE_NAMES=${CAMVIEW_ALARM_TYPE_NAMES:-}
       - CAMVIEW_MODE=${CAMVIEW_MODE:-}
@@ -28,8 +29,8 @@ services:
       - CAMVIEW_ADMIN_EMAIL=${CAMVIEW_ADMIN_EMAIL:-admin@camview.local}
       - CAMVIEW_ADMIN_PASSWORD=${CAMVIEW_ADMIN_PASSWORD:-}
       - CAMVIEW_DEMO_USERS=${CAMVIEW_DEMO_USERS:-0}
-      # Set in the .env file next to this compose file. If empty, the app generates
-      # one at start-up (then users must sign in again after each container restart).
+      # Set in the .env file next to this compose file (required for production). If empty, live mode generates
+      # one once and keeps it in the data volume (/app/backend/data/.session-secret), stable across restarts.
       - CAMVIEW_SECRET_KEY=${CAMVIEW_SECRET_KEY:-}
       - PORT=5000
       - LOG_LEVEL=INFO

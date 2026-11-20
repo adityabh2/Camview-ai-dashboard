@@ -8,7 +8,6 @@ an internal alarm object, internal notes, unshared evidence, or aggregates
 computed from hidden alarms.
 """
 
-import requests
 from flask import Blueprint, Response, jsonify, request
 
 import analytics
@@ -18,7 +17,7 @@ import rbac
 import reports
 import workflow
 from camview_client import ApiError
-from routes_common import body, project_label
+from routes_common import body, project_label, serve_media
 
 bp = Blueprint("client", __name__)
 
@@ -141,40 +140,8 @@ def evidence(alarm_id, kind, index):
     shared = [e for e in (db.jload(r["evidence"], []) or []) if e.get("shared")]
     if not any(e["kind"] == kind and e["index"] == index for e in shared):
         raise ApiError("not_found", "Evidence not available.", 404)
-    snap = db.jload(r["snapshot"], {}) or {}
-    src = snap
-    import datasource
-    for base in datasource.refresh(str(r["project_id"])).items:          # Camview signs media URLs for 7 days
-        if base["alarmId"] == alarm_id:
-            src = base
-            break
-    urls = src.get("imageUrls") or snap.get("imageUrls") or []
-    url = (urls[index] if index < len(urls) else None) if kind == "image" else (src.get("videoUrl") or snap.get("videoUrl"))
-    if not url:
-        raise ApiError("not_found", "Evidence not available.", 404)
-    if url.startswith("/demo-evidence/"):
-        import config
-        import demo_evidence
-        from urllib.parse import parse_qs, urlparse
-        if config.MODE != "demo":
-            raise ApiError("not_found", "Evidence not available.", 404)
-        u = urlparse(url)
-        q = {k: v[0] for k, v in parse_qs(u.query).items()}
-        name = u.path.rsplit("/", 1)[-1].removesuffix(".svg")
-        svg = demo_evidence.render(name, q.get("cam", ""), q.get("room", ""), q.get("ts", ""), q.get("type", ""),
-                                   int(q.get("f", "0") or 0))
-        return Response(svg, mimetype="image/svg+xml", headers={"Cache-Control": "private, max-age=300"})
-    try:
-        upstream = requests.get(url, stream=True, timeout=15,
-                                headers={"Range": request.headers["Range"]} if "Range" in request.headers else {})
-    except requests.RequestException:
-        raise ApiError("evidence_unavailable", "Evidence could not be loaded right now.", 502)
-    if upstream.status_code >= 400:
-        raise ApiError("evidence_unavailable", "Evidence could not be loaded right now.", 502)
-    headers = {k: upstream.headers[k] for k in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges")
-               if k in upstream.headers}
-    headers["Cache-Control"] = "private, max-age=300"
-    return Response(upstream.iter_content(64 * 1024), status=upstream.status_code, headers=headers)
+    # the freshest signed link (live feed → store → delivery snapshot), streamed: the client never sees it
+    return serve_media(alarm_id, kind, index, r["project_id"], proxy=True)
 
 
 def _reports(user):

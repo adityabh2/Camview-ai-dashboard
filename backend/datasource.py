@@ -37,6 +37,7 @@ _enriched_lock = threading.Lock()
 ENRICHED_MAX_AGE = 60       # seconds an enriched working set may be reused when nothing changed
 DEMO_NEW_ALARM_EVERY = 45   # seconds between simulated arrivals in demo mode
 MISSING_GRACE = 5           # refreshes a record stays in the window after Camview's shifting pages skipped it
+NEW_ALERT_MINUTES = 60      # a first-seen record older than this is not announced as a new alert
 # Fields whose change means "the alarm data changed" for the screens. Media links are re-signed by Camview on
 # every read and are deliberately not part of it: a new signature on the same frame is not a new alert.
 SIGNATURE_FIELDS = ("alarmId", "lastActionType", "lastInstance", "totalTimesReported", "frameSyncStatus", "alarmState",
@@ -62,13 +63,29 @@ class Feed:
         self.signature = None          # hash of SIGNATURE_FIELDS over the window: did the data itself change?
         self.changed_at = None         # last refresh that brought different alarm data
         self.enrich_lock = threading.Lock()
+        self.failures = 0              # consecutive failed refreshes (exponential backoff, see _backoff)
+        self.retry_at = 0.0            # no new attempt before this (epoch) after a failure, unless forced
+        self.from_store = False        # items are the stored copy (Camview unreachable since the process started)
+        self.last_attempt_at = None
+        self.last_failure_at = None
+        self.persist_error = None       # the last read could not be written to the canonical store
+        self.coverage = None            # pages read vs pages Camview has (sweep checkpoint when the window is limited)
 
 
 def reset():
+    import alert_store
     with _feeds_lock:
         _feeds.clear()
     with _enriched_lock:
         _enriched.clear()
+    alert_store.reset()
+
+
+BACKOFF_MAX = 300           # seconds: a failing project is retried at most this rarely (plus the circuit breaker)
+
+
+def _backoff(failures):
+    return min(BACKOFF_MAX, max(5, config.CACHE_SECONDS) * 2 ** max(0, failures - 1))
 
 
 def _signature(items):
@@ -98,14 +115,25 @@ def dictionaries():
     return types, prios
 
 
-def _normalize(raw_items):
+def _normalize(raw_items, project_id=None):
+    """Normalizes one read. A record that cannot be used is skipped — the rest of the refresh carries on — and
+    recorded as a data-quality event (dq.py), so it never disappears silently."""
+    import dq
     types, prios = dictionaries()
     names = {k: v["name"] for k, v in types.items()}
     labels = {k: v["label"] for k, v in prios.items()} or config.PRIORITY_LABELS
-    out, seen, skipped = [], set(), 0
+    out, seen, skipped, dupes = [], set(), 0, 0
     for it in raw_items or []:
-        alarm = it.get("alarm") if isinstance(it, dict) else None
-        src = alarm if isinstance(alarm, dict) else it if isinstance(it, dict) else {}
+        if not isinstance(it, dict):
+            skipped += 1
+            dq.record("malformed_record", project_id, None, f"record is {type(it).__name__}, not an object", it)
+            continue
+        alarm = it.get("alarm")
+        if alarm is not None and not isinstance(alarm, dict):
+            skipped += 1
+            dq.record("malformed_record", project_id, None, "'alarm' is not an object", it)
+            continue
+        src = alarm if isinstance(alarm, dict) else it
         aid = src.get("alarmId")
         derived = False
         if aid in (None, "") and src.get("cameraId") not in (None, "") and src.get("firstInstance"):
@@ -115,13 +143,20 @@ def _normalize(raw_items):
             aid = f"EVT-{src.get('projectId')}-{src['cameraId']}-{src.get('alarmType')}-{stamp}"
             it = {**it, "alarm": {**src, "alarmId": aid}} if isinstance(alarm, dict) else {**it, "alarmId": aid}
             derived = True
-        if not isinstance(it, dict) or aid in (None, "") or str(aid) in seen:
-            skipped += 1                      # not an object, no alarmId (cannot be opened/decided) or duplicate
+        if aid in (None, ""):
+            skipped += 1                      # cannot be opened or decided
+            dq.record("missing_alarm_id", project_id, None, "no alarmId and no camera + time to derive one", it)
+            continue
+        if str(aid) in seen:
+            dupes += 1                        # Camview's shifting pages returned it twice in one read
             continue
         try:
             a = normalizer.normalize(it, names, labels, config.HALL_FIELD)
-        except Exception:                     # malformed fields: skip this record only
+            if project_id not in (None, "") and a.get("projectId") in (None, ""):
+                a["projectId"] = int(project_id) if str(project_id).isdigit() else project_id
+        except Exception as e:                # malformed fields: skip this record only
             log.warning("Skipped a malformed Camview record (alarmId=%s)", aid)
+            dq.record("malformed_record", project_id, aid, f"{type(e).__name__}: {e}", it)
             skipped += 1
             continue
         seen.add(a["alarmId"])
@@ -145,8 +180,11 @@ def _normalize(raw_items):
             a["prioritySource"] = "camview"
         out.append(a)
     if skipped:
-        log.warning("Skipped %s malformed/duplicate Camview record(s) out of %s", skipped, len(raw_items or []))
-    _normalize.skipped = skipped
+        log.warning("Skipped %s malformed Camview record(s) out of %s", skipped, len(raw_items or []))
+    if dupes:
+        dq.record("duplicate_record", project_id, None, "same alarmId returned twice in one read (shifting pages)",
+                  {"duplicates": dupes})
+    _normalize.skipped = skipped + dupes
     return out
 
 
@@ -170,16 +208,62 @@ def _fetch_live(feed):
                 break
             first, data = list_page({"projectId": feed.project_id, "page": page, "size": 100})
             collected.extend(first)
-        return _normalize(collected), total, truncated
+        return _normalize(collected, feed.project_id), total, truncated
     pages = int(data["totalPages"])
-    wanted = min(pages, config.WINDOW_PAGES)
     truncated = pages > config.WINDOW_PAGES
-    if wanted > 1:
+    to_read = list(range(2, min(pages, config.WINDOW_PAGES) + 1))
+    if truncated:
+        to_read = _sweep_plan(feed, pages)
+    else:
+        feed.coverage = {"pagesTotal": pages, "pagesRead": pages, "complete": True}
+    if to_read:
         with ThreadPoolExecutor(max_workers=6, thread_name_prefix=f"camview-{feed.project_id}") as pool:
             for items, _ in pool.map(lambda p: list_page({"projectId": feed.project_id, "page": p, "size": 100}),
-                                     range(2, wanted + 1)):
+                                     to_read):
                 collected.extend(items)
-    return _normalize(collected), total, truncated
+    if truncated:
+        _sweep_commit(feed, pages)
+    return _normalize(collected, feed.project_id), total, truncated
+
+
+# A project larger than CAMVIEW_WINDOW_PAGES x 100 alarms cannot be read completely on every refresh. Camview's
+# pages are not time-ordered, so there is no "newest only" cursor to follow; instead each refresh reads the head
+# pages plus a rotating SWEEP of the remaining pages, with the position kept as a durable checkpoint
+# (settings "ingest:<project>"). Every page is read once per sweep cycle and every record read is persisted, so
+# nothing is lost; until a full cycle has completed the feed says DATA WINDOW LIMITED.
+SWEEP_SHARE = 5             # one fifth of the window reads the rotating sweep
+
+
+def _sweep_plan(feed, pages):
+    window = config.WINDOW_PAGES
+    sweep = max(1, window // SWEEP_SHARE) if window > 1 else 0
+    head = max(1, window - sweep)
+    cp = db.get_setting(f"ingest:{feed.project_id}", {}) or {}
+    cursor = int(cp.get("cursor") or head + 1)
+    if cursor <= head or cursor > pages:
+        cursor = head + 1
+    end = min(pages, cursor + sweep - 1)
+    feed._sweep = {"head": head, "from": cursor, "to": end, "cp": cp}
+    return list(range(2, head + 1)) + list(range(cursor, end + 1))
+
+
+def _sweep_commit(feed, pages):
+    s = getattr(feed, "_sweep", None)
+    if not s:
+        return
+    cp = dict(s["cp"])
+    wrapped = s["to"] >= pages
+    now = db.now_iso()
+    if not cp.get("cycleStartedAt"):
+        cp["cycleStartedAt"] = now
+    cp.update(cursor=s["head"] + 1 if wrapped else s["to"] + 1, pages=pages, updatedAt=now)
+    if wrapped:
+        cp.update(lastFullCycleAt=now, cycleStartedAt=now)
+    with db.quiet():
+        db.set_setting(f"ingest:{feed.project_id}", cp)
+    feed.coverage = {"pagesTotal": pages, "pagesPerRead": (s["head"] - 1 + 1) + (s["to"] - s["from"] + 1),
+                     "sweepFrom": s["from"], "sweepTo": s["to"], "nextSweepFrom": cp["cursor"],
+                     "lastFullCycleAt": cp.get("lastFullCycleAt"), "complete": bool(cp.get("lastFullCycleAt"))}
 
 
 def _fetch_demo(feed):
@@ -322,7 +406,9 @@ def start_warmer():
                 prune_stale_projects()
                 sync_project_codes()
                 for pid in all_project_ids():
-                    if time.time() - _feed(pid).fetched_at >= config.CACHE_SECONDS:
+                    f = _feed(pid)
+                    # a failing project is retried with exponential backoff, never hammered every round
+                    if time.time() - f.fetched_at >= config.CACHE_SECONDS and time.time() >= f.retry_at:
                         refresh(pid, force=True)
                 tickets_mod().deliver_pending_valid()     # an operator's VALID waiting for a client mapping
             except Exception:
@@ -341,6 +427,8 @@ def refresh(project_id, force=False):
     ttl = config.CACHE_SECONDS if config.MODE == "live" else 2
     if not force and time.time() - feed.fetched_at < ttl and (feed.items or feed.last_error):
         return feed
+    if not force and feed.last_error and time.time() < feed.retry_at:
+        return feed                                   # failing: backing off (screens keep the last good data)
     if not force and config.MODE == "live" and feed.items and not SHARE_INLINE:
         _refresh_in_background(project_id)           # show current data now; newer data follows
         return feed
@@ -353,11 +441,31 @@ def refresh(project_id, force=False):
             return feed
         try:
             items, total, truncated = _fetch_live(feed) if config.MODE == "live" else _fetch_demo(feed)
-            if config.MODE == "live":
+            if config.MODE == "live" and not items and feed.items and not feed.from_store:
+                # Camview never deletes alarms: an empty answer for a project that had alarms is a failed read,
+                # not "everything is gone" — keep the last good data and say the feed is delayed
+                raise ApiError("empty_response", f"Camview returned no alarms for project {project_id}, which had "
+                                                 f"{len(feed.items)} — the last data is kept.", 502)
+            if config.MODE == "live" and not feed.from_store:
                 items = _merge_missing(feed, items)
+            if config.MODE == "live" and truncated:
+                # pages outside this read's sweep: the last record read from them (persisted) completes the set
+                import alert_store
+                have = {a["alarmId"] for a in items}
+                items = items + [a for a in alert_store.project_items(project_id) if a["alarmId"] not in have]
             _detect_new(feed, items)
             had_error = feed.last_error is not None
+            import alert_store
+            try:                                  # canonical copy first: every listed alert stays openable
+                alert_store.save(project_id, items)
+                feed.persist_error = None
+            except alert_store.StoreError as se:
+                # the data was RECEIVED (screens show it) but NOT PERSISTED: said explicitly, never "all fine"
+                if feed.persist_error is None:
+                    changes.bump("persist-error")
+                feed.persist_error = {"message": str(se)[:200], "at": db.now_iso()}
             feed.items, feed.total_elements, feed.truncated = items, total, truncated
+            feed.from_store, feed.failures, feed.retry_at = False, 0, 0.0
             feed.latest_alert_at = max((a.get("lastInstance") or "" for a in items if a.get("eventKind") != "camera_status"),
                                        default="") or None
             feed.latest_event_at = max((a.get("lastInstance") or "" for a in items if a.get("eventKind") == "camera_status"),
@@ -393,21 +501,53 @@ def refresh(project_id, force=False):
                 except Exception:
                     log.exception("map position lookup failed for project %s", project_id)
             auto_share(project_id, items)     # Camview VALID alerts → client (background; never blocks a request)
-        except ApiError as e:
-            if feed.last_error is None:       # a feed that just stopped answering is shown as DELAYED at once
-                changes.bump("feed-error")
-            feed.last_error = {"code": e.code, "message": e.message, "at": db.now_iso()}
-            log.warning("Refresh failed for project %s: %s", project_id, e.message)
-            import notify
-            hour = datetime.now(timezone.utc).strftime("%Y%m%d%H")
-            notify.to_permission("settings.manage", "system", "Camview data refresh failed",
-                                 e.message, "#/settings?tab=system", project_id=project_id,
-                                 dedupe=f"refresh_fail:{project_id}:{hour}")
+        except Exception as e:                # never raises: an upstream (or unexpected) failure keeps the last data
+            if not isinstance(e, ApiError):
+                log.exception("Refresh of project %s failed unexpectedly", project_id)
+                e = ApiError("internal_error", "The alarm data could not be processed.", 500)
+            _refresh_failed(feed, project_id, e)
         feed.fetched_at = time.time()
         feed.last_attempt_at = db.now_iso()
         return feed
     finally:
         feed.lock.release()
+
+
+def _refresh_failed(feed, project_id, e):
+    import obs
+    if feed.last_error is None:               # a feed that just stopped answering is shown as DELAYED at once
+        changes.bump("feed-error")
+    feed.failures += 1
+    feed.last_failure_at = db.now_iso()
+    retry_after = getattr(e, "retry_after", None)             # Camview said when to come back (HTTP 429)
+    feed.retry_at = time.time() + max(_backoff(feed.failures), min(float(retry_after or 0), BACKOFF_MAX))
+    feed.last_error = {"code": e.code, "message": e.message, "at": db.now_iso()}
+    obs.count("refresh.failure")
+    obs.event("feed.refresh", "error", logging.WARNING, project_id=project_id, code=e.code,
+              failures=feed.failures, retryInSeconds=round(feed.retry_at - time.time()))
+    try:
+        _fallback_and_notify(feed, project_id, e)
+    except Exception:                          # the database itself failing must not turn a refresh into a crash
+        log.exception("could not record the refresh failure of project %s", project_id)
+
+
+def _fallback_and_notify(feed, project_id, e):
+    import notify
+    if not feed.items:
+        # nothing in memory (process just started): show the stored copy of every alert, clearly not LIVE
+        import alert_store
+        stored = alert_store.project_items(project_id)
+        if stored:
+            feed.items, feed.from_store = stored, True
+            feed.total_elements = len(stored)
+            feed.latest_alert_at = max((a.get("lastInstance") or "" for a in stored
+                                        if a.get("eventKind") != "camera_status"), default="") or None
+            log.info("Project %s: Camview unreachable — showing %s stored alerts", project_id, len(stored))
+            changes.bump("feed-stored")
+    hour = datetime.now(timezone.utc).strftime("%Y%m%d%H")
+    notify.to_permission("settings.manage", "system", "Camview data refresh failed",
+                         e.message, "#/settings?tab=system", project_id=project_id,
+                         dedupe=f"refresh_fail:{project_id}:{hour}")
 
 
 def _merge_missing(feed, items):
@@ -464,7 +604,10 @@ def _detect_new(feed, items):
     if feed.seen is None:
         feed.seen = ids                       # first load is the baseline — nothing is "new"
         return
-    fresh = [a for a in items if a["alarmId"] not in feed.seen]
+    # "new" = first seen AND raised recently: a record of an old page read for the first time (window sweep,
+    # a restart, Camview's shifting pages) is not a new alert and must not flood everyone with notifications
+    fresh = [a for a in items if a["alarmId"] not in feed.seen and not a.get("_stored")
+             and (_age_minutes(a.get("firstInstance") or a.get("lastInstance")) or 0) <= NEW_ALERT_MINUTES]
     feed.seen |= ids
     for a in fresh:
         feed.new_ids[a["alarmId"]] = now
@@ -491,16 +634,22 @@ def _detect_new(feed, items):
                                  alarm=a, dedupe=f"crit:{a['alarmId']}", severity="critical")
 
 
+LIVE_MAX_AGE_FACTOR = 6     # LIVE only while the last successful refresh is younger than 6 refresh periods (min 60 s)
+
+
 def freshness(feed):
+    """LIVE / DELAYED / DISCONNECTED / CONNECTING. LIVE is claimed only with a recent SUCCESSFUL refresh:
+    any error, a stale success, or data that only comes from the stored copy is never LIVE."""
+    import camview_client
     state = "live"
-    if feed.last_error and not feed.items:
+    if feed.last_error and (not feed.items or feed.from_store or not feed.last_success_at):
         state = "disconnected"
     elif feed.last_error:
         state = "delayed"
     elif feed.last_success_at:
         age = (datetime.now(timezone.utc) - datetime.fromisoformat(feed.last_success_at.replace("Z", "+00:00"))) \
             .total_seconds()
-        if age > max(60, config.CACHE_SECONDS * 6):
+        if age > max(60, config.CACHE_SECONDS * LIVE_MAX_AGE_FACTOR):
             state = "delayed"
     else:
         state = "connecting"
@@ -511,7 +660,16 @@ def freshness(feed):
             "mode": config.MODE, "windowSize": len(feed.items), "totalElements": feed.total_elements,
             "truncated": feed.truncated, "cacheSeconds": config.CACHE_SECONDS,
             "latestAlertAt": feed.latest_alert_at, "latestEventAt": feed.latest_event_at,
-            "quietHours": None if quiet_h is None else round(quiet_h / 60, 1)}
+            "quietHours": None if quiet_h is None else round(quiet_h / 60, 1),
+            "source": "stored" if feed.from_store else ("live" if config.MODE == "live" else "demo"),
+            # "live data received" vs "received but NOT persisted" (the canonical store failed)
+            "persisted": feed.persist_error is None, "persistError": feed.persist_error,
+            "windowLimited": bool(feed.truncated), "coverage": getattr(feed, "coverage", None),
+            "lastFailureAt": feed.last_failure_at,
+            "consecutiveFailures": feed.failures,
+            "nextAttemptAt": datetime.fromtimestamp(feed.retry_at, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            if feed.last_error and feed.retry_at else None,
+            "circuit": camview_client.breaker_state() if config.MODE == "live" else None}
 
 
 # ---------------------------------------------------------------------------
@@ -537,7 +695,7 @@ def discover_projects(start=1, end=2000, workers=12):
     known = set(all_project_ids())
 
     def newest(items):
-        alerts = [i.get("alarm") or {} for i in items]
+        alerts = [i.get("alarm") or {} for i in items if isinstance(i, dict)]
         det = [a for a in alerts if a.get("alarmType") != 10]
         return (max((a.get("lastInstance") or "" for a in det), default="") or None,
                 max((a.get("lastInstance") or "" for a in alerts), default="") or None)
@@ -561,7 +719,7 @@ def discover_projects(start=1, end=2000, workers=12):
                 pass
         latest_alert, latest_any = newest(items)
         return {"projectId": str(pid), "total": total, "pages": pages, "complete": pages <= 5,
-                "cameras": len({(i.get("camera") or {}).get("id") for i in items} - {None}),
+                "cameras": len({(i.get("camera") or {}).get("id") for i in items if isinstance(i, dict)} - {None}),
                 "latestAlertAt": latest_alert, "latestAt": latest_any, "monitored": str(pid) in known,
                 "quietHours": None if not latest_alert else round((_age_minutes(latest_alert) or 0) / 60, 1)}
 
@@ -750,10 +908,14 @@ def enrich(items, new_ids=None, pol=None):
         a = dict(base)
         # ---- automatic exam + client resolution (from Administration › Exams mapping)
         exam = exams_mod.resolve(a.get("projectId"), a.get("firstInstance"))
-        a["exam"] = {"id": exam["id"], "code": exam["code"], "name": exam["name"]} if exam else None
+        # the exam's window and the phase the alert fell in (pre / live / post exam) travel with the alert
+        a["exam"] = {"id": exam["id"], "code": exam["code"], "name": exam["name"], "startDate": exam.get("startDate"),
+                     "endDate": exam.get("endDate"),
+                     "phase": exams_mod.phase(exam, a.get("lastInstance") or a.get("firstInstance"))} if exam else None
         ck = (str(a.get("projectId")), exam["id"] if exam else None)
         if ck not in client_cache:
-            client_cache[ck] = [{"id": c["id"], "name": c["name"]} for c in exams_mod.clients_for(a.get("projectId"), exam)]
+            client_cache[ck] = [{"id": c["id"], "name": c["name"], "status": c["status"]}
+                                for c in exams_mod.clients_for(a.get("projectId"), exam)]
         a["clients"] = client_cache[ck]
         a["client"] = a["clients"][0] if len(a["clients"]) == 1 else None
         t = tix.get(a["alarmId"])
@@ -776,7 +938,9 @@ def enrich(items, new_ids=None, pol=None):
             a["hall"] = "Unmapped"
         r = reviews.get(a["alarmId"])
         a["review"] = {"status": r["status"], "by": r["updatedBy"], "at": r["updatedAt"],
-                       "validatedById": r["validatedById"]} if r else {"status": "unreviewed"}
+                       "validatedById": r["validatedById"], "revision": r["revision"],
+                       "acknowledgedBy": r["acknowledgedBy"], "acknowledgedAt": r["acknowledgedAt"]} if r \
+            else {"status": "unreviewed", "revision": 0, "acknowledgedBy": None, "acknowledgedAt": None}
         a["opsReviewStatus"] = a["review"]["status"]
         a["publications"] = pubs.get(a["alarmId"], [])
         a["visibility"] = workflow.visibility_summary(a["publications"])
@@ -806,6 +970,9 @@ def enrich(items, new_ids=None, pol=None):
         a["decisionSource"] = "operator" if rs in ("marked_valid", "marked_invalid", "marked_exception") else "camview"
         a["flags"] = {
             "pending": pending,
+            # the ACKNOWLEDGE step: a pending alert nobody has picked up yet (never a camera status event)
+            "unacknowledged": a["decision"] == "pending" and not a["review"].get("acknowledgedAt")
+                              and (a.get("eventKind") or "alert") == "alert",
             # Camview sends priority 1 on every record: "critical" is only a fact once the mapping is confirmed
             "criticalPending": pending and a.get("priority") == "critical" and bool(a.get("priorityConfirmed")),
             "repeated": (a.get("totalTimesReported") or 1) >= pol["repeatThreshold"]
@@ -863,38 +1030,11 @@ def working_set(user, project_id, force=False):
 
 
 def find_alarm(user, alarm_id, project_id=None):
-    """Looks an alarm up in the working sets the user may see; falls back to
-    the snapshot stored with a review/publication/assignment (Camview has no
-    get-by-id endpoint). Returns None when unavailable OR out of scope —
-    callers answer both the same way so hidden records aren't revealed."""
-    import rbac
-    candidates = [str(project_id)] if project_id else [p for p in allowed_projects(user)]
-    for pid in candidates:
-        if not rbac.project_allowed(user, pid):
-            continue
-        feed = refresh(pid)
-        for base in feed.items:
-            if base["alarmId"] == alarm_id:
-                a = enrich([base], feed.new_ids)[0]
-                a["source"] = "live" if config.MODE == "live" else "demo"
-                return a if rbac.alarm_in_scope(user, a) else None
-    snap = None
-    for sql in ("SELECT snapshot FROM publications WHERE alarm_id=? AND snapshot IS NOT NULL",
-                "SELECT snapshot FROM assignments WHERE alarm_id=? AND snapshot IS NOT NULL",
-                "SELECT snapshot FROM ops_review WHERE alarm_id=? AND snapshot IS NOT NULL"):
-        r = db.one(sql, (alarm_id,))
-        if r:
-            snap = db.jload(r["snapshot"], None)
-            if snap and snap.get("projectId") is not None:
-                break
-    if not snap or snap.get("projectId") is None or not rbac.project_allowed(user, snap.get("projectId")):
-        return None
-    base = {k: snap.get(k) for k in snap if k != "context"}
-    base.setdefault("alarmId", alarm_id)
-    base.setdefault("imageUrls", [])
-    a = enrich([base])[0]
-    a["source"] = "snapshot"
-    return a if rbac.alarm_in_scope(user, a) else None
+    """One alert as `user` may see it, or None when unavailable OR out of scope (callers answer both the same
+    way so hidden records aren't revealed). Delegates to alert_service — the single retrieval path:
+    live feed → canonical alert store → review / ticket snapshot."""
+    import alert_service
+    return alert_service.get(user, alarm_id, project_id)
 
 
 def live_alarms(project_id, alarm_ids):
@@ -941,7 +1081,7 @@ def fetch_range(user, project_id, start, end):
                     break
             else:
                 truncated = True
-            items = _normalize(collected)
+            items = _normalize(collected, project_id)
             _range_cache[key] = (time.time(), (items, truncated))
     enriched = [a for a in enrich(analytics.in_range(items, start, end)) if rbac.alarm_in_scope(user, a)]
     return enriched, truncated

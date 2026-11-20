@@ -88,6 +88,32 @@ def clients_for(project_id, exam=None):
                    "WHERE cp.project_id=? ORDER BY c.name", (str(project_id),))
 
 
+PHASES = ("pre_exam", "live_exam", "post_exam", "unknown")
+
+
+def phase(exam, when_iso=None):
+    """The exam phase at `when_iso` (default: now) from the exam's own date window:
+    pre_exam | live_exam | post_exam. Without dates the phase is unknown — never guessed."""
+    if not exam:
+        return "unknown"
+    start, end = exam.get("startDate"), exam.get("endDate")
+    if not start and not end:
+        return "unknown"
+    day = str(when_iso or db.now_iso())[:10]
+    if start and day < start:
+        return "pre_exam"
+    if end and day > end:
+        return "post_exam"
+    return "live_exam"
+
+
+def session(exam):
+    """The exam session as the dashboard understands it: exam, client, window and the CURRENT phase."""
+    return {"id": exam["id"], "code": exam["code"], "name": exam["name"], "clientId": exam.get("clientId"),
+            "clientName": exam.get("clientName"), "startDate": exam.get("startDate"), "endDate": exam.get("endDate"),
+            "phase": phase(exam)}
+
+
 # ---------------------------------------------------------------------------
 # Client + exam derived from the project code
 #   MPESB/G2SG4-CRT-2026/220926/LIVECCTV/IIL

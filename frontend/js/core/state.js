@@ -28,6 +28,8 @@ export const session = {
 export function setSession(data) {
   Object.assign(session, {
     authenticated: !!data.authenticated,
+    noLogin: !!data.noLogin,
+    clientPortal: !!data.clientPortal,
     user: data.user || null,
     mode: data.mode,
     features: data.features || {},

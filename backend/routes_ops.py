@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request
 
+import alert_service
 import analytics
 import changes
 import config
@@ -25,6 +26,7 @@ import kpis
 import mock_data
 import nomenclature
 import notify
+import obs
 import rbac
 import reports
 import workflow
@@ -49,11 +51,15 @@ def slim(a):
         show = bool(u and "evidence.view" in u["permissions"])
     except Exception:                           # outside a request
         show = False
-    out["imageUrl"] = (a.get("imageUrls") or [None])[0] if show else None
-    out["hasVideo"] = bool(a.get("videoUrl")) if show else False
+    links = alert_service.media_links(a, show)          # resolvable links, never a stored signed one
+    out["imageUrl"] = links["imageUrl"]
+    out["hasVideo"] = bool(links["videoUrl"])
+    out["alert"] = alert_service.dto(a, show)           # the same AlertDTO the detail answers with
     out["context"] = {"mapped": (a.get("context") or {}).get("mapped"),
                       "path": (a.get("context") or {}).get("path", [])}
-    out["review"] = {"status": (a.get("review") or {}).get("status"), "by": (a.get("review") or {}).get("by")}
+    rv = a.get("review") or {}
+    out["review"] = {"status": rv.get("status"), "by": rv.get("by"),
+                     "acknowledgedBy": rv.get("acknowledgedBy"), "acknowledgedAt": rv.get("acknowledgedAt")}
     vis = a.get("visibility") or {}
     out["visibility"] = {"state": vis.get("state"), "label": vis.get("label"), "acknowledged": vis.get("acknowledged"),
                          "clients": vis.get("clients", [])}
@@ -117,6 +123,9 @@ def status():
     latest = [f["latestAlertAt"] for f in per.values() if f.get("latestAlertAt")]
     overall = {**worst, "lastSuccessAt": min(succ) if succ else None, "projects": len(per),
                "failing": [p for p, f in per.items() if f.get("lastError")],
+               # received but not written to the canonical store / only part of a huge project read per refresh
+               "notPersisted": [p for p, f in per.items() if f.get("persisted") is False],
+               "windowLimited": [p for p, f in per.items() if f.get("windowLimited")],
                "latestAlertAt": max(latest) if latest else None,
                "quietHours": min((f["quietHours"] for f in per.values() if f.get("quietHours") is not None), default=None)}
     return jsonify({"projectId": pid, "freshness": datasource.freshness(feed), "overall": overall, "newAlarms": new_count,
@@ -384,7 +393,7 @@ def alarm_detail(alarm_id):
         sharing.append(entry)
     bm = db.one("SELECT 1 FROM bookmarks WHERE user_id=? AND alarm_id=?", (user["id"], alarm_id))
     return jsonify({
-        "alarm": a,
+        "alarm": alert_service.public(a, user),
         "notes": workflow.notes_for(alarm_id) if can_inv else [],
         "audit": db.get_audit_trail(alarm_id) if (can_inv or "audit.view" in user["permissions"]) else [],
         "related": _related(user, a) if can_inv else [],
@@ -394,9 +403,8 @@ def alarm_detail(alarm_id):
         "policy": {"fourEyes": pol["fourEyes"], "requireApproval": pol["requireApproval"],
                    "validSource": pol["validSource"]},
         "valid": workflow.is_valid(a, pol),
-        "evidenceItems": ([{"kind": "image", "index": i, "url": u} for i, u in enumerate(a.get("imageUrls") or [])]
-                          + ([{"kind": "video", "index": 0, "url": a["videoUrl"]}] if a.get("videoUrl") else []))
-        if "evidence.view" in user["permissions"] else [],
+        "evidenceItems": sorted(alert_service.evidence_items(a, "evidence.view" in user["permissions"]),
+                                key=lambda e: e["kind"] != "image"),
         "canDownloadEvidence": "evidence.download" in user["permissions"],
     })
 
@@ -420,8 +428,21 @@ def alarm_review(alarm_id):
     if action == "reopen" and a["visibility"]["state"] in ("shared", "approved", "ready_for_review"):
         raise ApiError("not_eligible", "Withdraw the client share before reopening this alarm.", 409)
     snap = workflow._snapshot(a)
-    result = db.apply_action(alarm_id, action, user["name"], b.get("note"), snapshot=snap, user=user,
-                             project_id=a.get("projectId"))
+    target = db.ALLOWED_ACTIONS[action]
+    with db.connect(immediate=True) as conn:           # same optimistic-concurrency rule as the review screen
+        cur = db.get_review(alarm_id, conn)
+        exp = b.get("expectedRevision")
+        if exp not in (None, "") and str(exp) != str(cur["revision"]) and target is not None and cur["status"] != target:
+            obs.count("validation.conflict")
+            raise ApiError("conflict", f"{cur['updatedBy'] or 'Someone'} changed this alarm while you were reviewing it. "
+                                       "Nothing was saved — reload and decide again.", 409,
+                           details={"current": {"status": cur["status"], "by": cur["updatedBy"], "at": cur["updatedAt"],
+                                                "revision": cur["revision"]}})
+        if target is not None and cur["status"] == target and not (b.get("note") or "").strip():
+            result = cur                                # idempotent repeat: no second audit row, no new revision
+        else:
+            result = db.apply_action(alarm_id, action, user["name"], b.get("note"), snapshot=snap, user=user,
+                                     project_id=a.get("projectId"), conn=conn)
     if action == "mark_valid" and workflow.policy()["requireApproval"]:
         notify.to_permission("alarm.approve", "approval", f"Validated: {alarm_id}",
                              f"{user['name']} marked {a.get('alarmTypeName')} valid — ready for client review.",
@@ -524,7 +545,7 @@ def history():
         if args.get(k) not in (None, ""):
             req[k] = args[k]
     raw, data = list_page(req)
-    enriched = [a for a in datasource.enrich(datasource._normalize(raw)) if rbac.alarm_in_scope(user, a)]
+    enriched = [a for a in datasource.enrich(datasource._normalize(raw, pid)) if rbac.alarm_in_scope(user, a)]
     local = {k: v for k, v in args.items() if k not in ("alarmType", "lastActionType", "shiftLabel", "from", "to")}
     enriched = filter_alarms(enriched, local, user)
     return jsonify({"items": [slim(a) for a in enriched], "page": (data.get("page") or 0) + 1,
@@ -662,7 +683,8 @@ def camera_detail(cam_id):
         "occurrences": sum(a.get("totalTimesReported") or 1 for a in cam_items),
         "latest": slim(max(cam_items, key=lambda a: a.get("lastInstance") or "")) if cam_items else None,
         "alarms": [slim(a) for a in sorted(cam_items, key=lambda a: a.get("lastInstance") or "", reverse=True)[:100]],
-        "evidence": [{"alarmId": a["alarmId"], "images": a.get("imageUrls") or [], "video": a.get("videoUrl"),
+        "evidence": [{"alarmId": a["alarmId"], "images": alert_service.media_links(a)["imageUrls"],
+                      "video": alert_service.media_links(a)["videoUrl"],
                       "at": a.get("lastInstance")} for a in cam_items if a["flags"]["evidence"]][:24]
         if "evidence.view" in user["permissions"] else [],
         "investigations": related_inv,
@@ -734,7 +756,10 @@ def context_quality():
     pid = project_param(user)
     items, _ = datasource.working_set(user, pid)
     known = {r["id"] for r in db.rows("SELECT id FROM alarm_types")}
-    return jsonify(nomenclature.quality(items, known))
+    import dq
+    out = nomenclature.quality(items, known)
+    out["counters"] = dq.summary(items)          # malformed records · unknown types · missing mappings / evidence
+    return jsonify(out)
 
 
 # ---------------------------------------------------------------------------
@@ -856,7 +881,8 @@ def evidence():
             for e in p["evidence"]:
                 if e.get("shared") and p["status"] == "shared":
                     shared.setdefault(f"{e['kind']}:{e['index']}", []).append(p["clientName"])
-        out.append({**slim(a), "imageUrls": a.get("imageUrls") or [], "videoUrl": a.get("videoUrl"),
+        links = alert_service.media_links(a)
+        out.append({**slim(a), "imageUrls": links["imageUrls"], "videoUrl": links["videoUrl"],
                     "sharedEvidence": shared})
     page["items"] = out
     return jsonify(page)

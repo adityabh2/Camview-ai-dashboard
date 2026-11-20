@@ -1,0 +1,154 @@
+/* =====================================================================
+   CAMVIEW Command Center — refinement layer
+   A calm control room for people who review exam CCTV alerts for hours.
+   * Type: Public Sans (made for public-service interfaces) for everything people read;
+     IBM Plex Mono only where characters must line up: project codes, ids, counts.
+   * Ink-indigo accent, kept clear of the verdict colours (amber / green / violet / red).
+   * Quiet structure: hairlines instead of shadows, sentence-case labels, one radius per
+     level (pills for choices, 10px for panels, 7px for controls).
+   Loaded after app.css; only overrides tokens and a few component rules.
+   ===================================================================== */
+
+:root{
+  --font:'Public Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Consolas,monospace;
+  --r-s:7px; --r-m:10px; --r-l:14px;
+  /* dark: deep blue-graphite rather than flat black */
+  --bg:#0c1017; --bg-2:#0f141c; --panel:#131a24; --panel-2:#10161f; --panel-3:#1a2330; --hover:#18212d;
+  --border:#212b39; --border-strong:#2e3a4b;
+  --text:#e9edf3; --text-2:#a9b3c2; --text-3:#748094;
+  --accent:#5b67e8; --accent-2:#8089f0; --accent-soft:rgba(91,103,232,.14); --accent-line:rgba(128,137,240,.45);
+  --focus:#8089f0; --chart-1:#6b76ea; --st-info:#6b76ea; --st-info-bg:rgba(91,103,232,.14);
+  --sh-1:none;
+  --sh-2:0 18px 44px rgba(0,0,0,.45);
+}
+:root[data-theme="light"]{
+  /* cool paper, near-black ink */
+  --bg:#f4f5f8; --bg-2:#eceef3; --panel:#ffffff; --panel-2:#f8f9fb; --panel-3:#eef0f5; --hover:#f2f3f8;
+  --border:#e2e5ec; --border-strong:#cfd4de;
+  --text:#121826; --text-2:#465064; --text-3:#7a8396;
+  --accent:#3b47c9; --accent-2:#3340b8; --accent-soft:rgba(59,71,201,.08); --accent-line:rgba(59,71,201,.35);
+  --focus:#3b47c9; --chart-1:#3b47c9; --st-info:#3b47c9; --st-info-bg:rgba(59,71,201,.08);
+  --sh-1:none;
+  --sh-2:0 18px 44px rgba(18,24,38,.14);
+}
+
+body{font:13.5px/1.5 var(--font);letter-spacing:-.003em;font-feature-settings:"tnum" 0;}
+h1,h2,h3{font-family:var(--font);}
+.num,.k-value,.mono{font-feature-settings:"tnum" 1;}
+
+/* ---- shell ---- */
+.sidebar{background:var(--panel);}
+.brand{padding:18px 16px 16px;}
+.brand-mark{background:var(--accent);box-shadow:none;border-radius:9px;}
+.brand-name{letter-spacing:.08em;}
+.brand-sub{text-transform:none;letter-spacing:0;font-size:11px;}
+.nav{padding:12px 10px;gap:2px;}
+.nav a{position:relative;padding:8px 10px;font-weight:500;border:0;}
+.nav a.active{background:var(--accent-soft);color:var(--text);font-weight:600;}
+.nav a.active::before{content:'';position:absolute;left:-10px;top:7px;bottom:7px;width:3px;border-radius:0 3px 3px 0;background:var(--accent);}
+.topbar{background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:saturate(1.4) blur(10px);-webkit-backdrop-filter:saturate(1.4) blur(10px);
+  border-bottom:1px solid var(--border);}
+.topbar h1{font-size:15px;font-weight:650;letter-spacing:-.01em;}
+.content{padding:24px 28px 56px;max-width:1480px;width:100%;}
+
+/* ---- headings & labels: sentence case, no tracked capitals ---- */
+.page-head h2{font-size:22px;font-weight:700;letter-spacing:-.02em;}
+.section-title{font-size:13px;font-weight:650;letter-spacing:0;text-transform:none;color:var(--text);margin:28px 0 12px;}
+.section-title::after{background:var(--border);}
+.qhead{font-size:11.5px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--text-3);}
+table.t th{font-size:11.5px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--text-3);}
+.card-h h2,.card-h h3{font-size:13.5px;font-weight:650;letter-spacing:-.005em;}
+
+/* ---- surfaces: hairlines, no drop shadows ---- */
+.card,.kpi,.pcard,.banner{box-shadow:none;}
+.card{border-radius:var(--r-m);}
+.card-h{padding:14px 16px;}
+.card-b{padding:16px;}
+
+/* ---- KPIs: number first, quiet label, thin status edge ---- */
+.kpis{gap:12px;margin-bottom:20px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));}
+.kpi{padding:14px 16px 13px;border-radius:var(--r-m);}
+.kpi .k-label{font-size:12px;font-weight:500;color:var(--text-2);}
+.kpi .k-value{font:600 26px/1.1 var(--mono);letter-spacing:-.02em;margin-top:8px;}
+.kpi .k-sub{font-size:11.5px;margin-top:4px;}
+.kpi.accent-critical{box-shadow:inset 2px 0 0 var(--st-critical);}
+.kpi.accent-warning{box-shadow:inset 2px 0 0 var(--st-warning);}
+.kpi.accent-good{box-shadow:inset 2px 0 0 var(--v-valid);}
+.kpi.accent-info{box-shadow:inset 2px 0 0 var(--accent);}
+.kpi.accent-violet{box-shadow:inset 2px 0 0 var(--v-invalid);}
+a.kpi:hover{background:var(--panel);border-color:var(--accent-line);}
+
+/* ---- controls ---- */
+.btn{height:32px;padding:0 14px;font-weight:600;border-radius:var(--r-s);}
+.btn.sm{height:28px;padding:0 10px;}
+.btn.primary{background:var(--accent);border-color:var(--accent);}
+.btn.primary:hover{filter:none;background:var(--accent-2);border-color:var(--accent-2);}
+.input,.select,textarea.input{height:32px;border-radius:var(--r-s);background:var(--panel);}
+.input:focus,.select:focus{box-shadow:0 0 0 3px var(--accent-soft);}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px;}
+.chip{height:30px;padding:0 12px;font-weight:500;}
+.tabs{gap:4px;}
+.tab{padding:10px 12px;font-weight:550;}
+.tab.on{border-bottom-color:var(--accent);}
+.filters{gap:8px;padding:12px;background:var(--panel);border:1px solid var(--border);border-radius:var(--r-m);margin-bottom:14px;}
+
+/* ---- queue rows ---- */
+.qrow{padding:12px 16px;}
+.qrow .t1{font-size:14px;font-weight:600;}
+.qrows .qrow:last-child{border-bottom:0;}
+
+/* ---- project code tabs on the Alerts page ---- */
+.q-codes{margin:0 0 14px;}
+.q-codes:empty{display:none;}
+
+/* ---- dashboard masthead: the one bold element ---- */
+.dm-code{font-weight:700;letter-spacing:-.025em;font-size:clamp(22px,2.6vw,32px);}
+.dm-code i{font-weight:300;color:var(--accent-line);padding:0 .02em;}
+.dash-mast{padding-bottom:20px;margin-bottom:20px;}
+.dr-bar{height:12px;border-radius:6px;}
+
+@media (max-width:760px){
+  .content{padding:16px 16px 40px;}
+  .filters{padding:10px;}
+}
+
+/* ============================== CLIENT PORTAL ==============================
+   For exam-board officials: larger, plainer, one thing asked of them at a time. */
+.cp-mast{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;
+  padding:6px 0 22px;margin-bottom:20px;border-bottom:1px solid var(--border);}
+.cp-org{min-width:0;flex:1 1 420px;}
+.cp-org h2{margin:0 0 10px;font-size:clamp(22px,2.4vw,30px);font-weight:700;letter-spacing:-.02em;}
+.cp-codes{display:flex;flex-direction:column;gap:4px;}
+.cp-code{font-size:clamp(14px,1.4vw,17px);font-weight:600;color:var(--text-2);letter-spacing:-.005em;}
+.cp-code i{color:var(--border-strong);}
+
+.cp-attn{display:flex;align-items:center;gap:16px;padding:18px 20px;margin-bottom:20px;border-radius:var(--r-m);
+  border:1px solid var(--border);background:var(--panel);}
+.cp-attn b{font-size:15px;font-weight:650;}
+.cp-attn .muted{margin-top:2px;}
+.cp-attn-ic{display:grid;place-items:center;width:40px;height:40px;border-radius:50%;flex-shrink:0;}
+.cp-attn-ic svg{width:20px;height:20px;}
+.cp-attn.is-open{border-color:color-mix(in srgb,var(--st-warning) 45%,var(--border));}
+.cp-attn.is-open .cp-attn-ic{background:var(--st-warning-bg);color:var(--v-pending);}
+.cp-attn.is-clear .cp-attn-ic{background:var(--st-good-bg);color:var(--v-valid);}
+
+.cp-kpis{grid-template-columns:repeat(auto-fit,minmax(180px,1fr));}
+.cp-kpis .kpi .k-value{font-size:30px;}
+
+.cp-exam{align-items:center;}
+.cp-exam-n{display:flex;flex-direction:column;align-items:flex-end;text-align:right;flex-shrink:0;}
+.cp-exam-n b{font-size:18px;}
+.cp-exam-n .muted{font-size:11.5px;}
+.cp-foot{display:flex;align-items:center;gap:6px;font-size:12px;margin-top:22px;}
+
+@media (max-width:640px){
+  .cp-attn{flex-wrap:wrap;}
+  .cp-attn .btn{width:100%;}
+}
+
+/* sign-in: plain headline, a few plain points (no tracked capitals) */
+.login h1.l-portal-h{font-size:clamp(28px,3.4vw,40px);font-weight:700;letter-spacing:-.025em;margin:0 0 12px;text-transform:none;}
+.l-points{list-style:none;padding:0;margin:20px 0 0;display:flex;flex-direction:column;gap:10px;font-size:14px;color:var(--text-2);}
+.l-points li{display:flex;align-items:center;gap:10px;}
+.l-points li::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0;}

@@ -10,12 +10,10 @@ ALERT ARRIVES → exam, client & location resolved automatically → human decid
       → VALID creates the ticket (once) → routed to the exam's client (automatic, or one-click Send)
 ```
 
-**The system does the work; the person only decides — or nobody does.** With
-`CAMVIEW_DELIVERY_TRIGGER=arrival` (Settings › Workflow › *On arrival*) every detection alert
-is delivered to the exam's client the moment Camview sends it — a 12:00 alert reaches the
-client at 12:00, not when someone marks it VALID hours later. Camera status events are never
-delivered; INVALID / EXCEPTION (from Camview or an operator) withdraws an alert. With
-`valid` the classic flow applies: delivery after Camview or an operator marks it VALID.
+**The system does the work; the person only decides.** The operations team sees every alert
+Camview sends; a client sees an alert only after the operations team marks it **VALID**
+(Camview's own status never publishes anything). INVALID / EXCEPTION withdraws an alert that
+had been delivered. Camera status events are never delivered.
 No forms, no mandatory notes,
 no manual ticket creation, no choosing the client (unless an exam genuinely has several).
 The full enterprise toolset (investigations, manual sharing workflow, analytics, rules…)
@@ -28,6 +26,71 @@ and **client representatives**, with one hard rule running through everything:
 > A *valid* alarm is never automatically *shared*.**
 
 ---
+
+## Run on this computer with Docker (no sign-in)
+
+1. Install and start **Docker Desktop**.
+2. Put a `.env` file next to `docker-compose.local.yml` (copy `backend/.env.example`) with at least
+   `CAMVIEW_API_KEY` (raw scoped key, or `Bearer <token>`) and `CAMVIEW_PROJECT_ID`.
+3. Double-click **`start-local.bat`**. The browser opens **http://localhost:5000** directly on the
+   dashboard: there is no sign-in screen (`CAMVIEW_NO_LOGIN=1`).
+
+| Script | What it does |
+|---|---|
+| `start-local.bat` | builds and starts the app in Docker (`docker compose -f docker-compose.local.yml up -d --build`) |
+| `stop-local.bat` | stops it; the local database is kept |
+| `reset-local-data.bat` | deletes the local database (reviews, tickets, app settings, audit trail) and starts fresh |
+
+### Every alert goes to the client (no marking)
+
+`docker-compose.local.yml` sets `CAMVIEW_CLIENT_DELIVERY=all`:
+
+* Every detection alert is sent to its client the moment Camview reports it, whatever its Camview status.
+  Nobody marks VALID / INVALID; those buttons are hidden. Camera online / offline events are never sent.
+* **Revoke from client** (on the alert, or **Revoke** on Tickets) removes one alert from the client's view.
+  A revoked alert is never sent again automatically; **Send to client again** restores it.
+* Clients receive the alerts of the projects mapped to them (Clients › project codes).
+* Without the setting (`valid`, the default on servers) the old rule applies: clients see only alerts an
+  operator marked VALID.
+
+### Project codes first
+
+The dashboard is organised by the exam's **project code** (Camview's `clientProjectId`, for example
+`RAILTEL-J&K/JKSSB-AAE-FOC/151126/CCTV-AI/IIL`), not by Camview's project numbers:
+
+* **Add project code** (dashboard): type the code. Camview's Project Lookup finds every project that
+  carries it; they are monitored and shown under the code. Nothing is mapped by hand.
+* Each registered code is a tab on the dashboard; **All projects** shows everything together.
+* Codes are looked up again every 15 minutes, so a project Camview adds later under the same code
+  appears by itself. **Manage codes** removes a code (its projects stop being monitored).
+* Codes in `CAMVIEW_PROJECT_CODES` (`id:code`) join the list as "mapped in configuration", for
+  projects whose code Camview's lookup does not know.
+* `docker-compose.local.yml` switches automatic discovery of numbered projects off
+  (`CAMVIEW_AUTO_DISCOVER=0`); data comes only from registered codes.
+
+API: `GET /api/project-codes`, `POST /api/project-codes {code}`, `POST /api/project-codes/remove {code}`,
+`POST /api/project-codes/refresh`; `GET /api/queue/summary?code=<code>` filters the dashboard by code.
+
+### Client portal with sign-in (port 5001)
+
+The local setup has two doors into the same app:
+
+| Address | Who | Sign-in |
+|---|---|---|
+| `http://localhost:5000` | administrators, on this computer only | none |
+| `http://<this computer's IP>:5001` | clients, from the network | required, **client accounts only** |
+
+* Create client logins in **Clients › Add login** (on port 5000). Give the client the sign-in name, the
+  password and the address `http://<this computer's IP>:5001`.
+* Port 5001 refuses every internal account (admins, operators) with the same answer as a wrong password,
+  and ignores an internal session cookie, so settings and keys can never be reached from the network.
+* Which door a request used is read from the server's own socket, never from the `Host` header.
+* Windows may ask to allow Docker through the firewall the first time; allow it on private networks.
+* To keep the portal on this computer only, set `CAMVIEW_PORTAL_BIND=127.0.0.1` in `.env`.
+
+Without sign-in, everyone who can open port 5000 is the Super Admin. `docker-compose.local.yml` therefore
+publishes the port on **127.0.0.1 only**, so other computers cannot reach it. For a shared or server
+install, use `docker-compose.yml`, which keeps sign-in on.
 
 ## Contents
 
@@ -63,13 +126,13 @@ Administration** (everything else is under **Advanced** / Administration).
 | Screen | What it does |
 |---|---|
 | **Dashboard** (home) | ALERTS TODAY · PENDING · VALID · INVALID · EXCEPTION (every verdict, with today's share) · DELIVERED TO CLIENTS · **CAMERAS OFFLINE** · **CAMERA STATUS EVENTS**, **Alerts per hour** (stacked by verdict) and **Busiest alert types** charts, an **Alerts by type** table (how many of each type today, per verdict), a banner when tickets wait to be sent, the 12 highest-priority pending alerts as cards, and every exam with its pending count. Clients never see this page: their portal shows only the alerts delivered to them. |
-| **Alerts** | **Today by default** — pick a date (or *All dates*) to see earlier days. One queue across **all exams, clients and projects** you may see; the project switcher in the top bar appears only for people with access to more than one project. Two kinds of record, one at a time: **Alerts** (detections — each row shows the **alert frame** Camview attached, with a play marker when a clip exists) and **Camera status events** (Camview's camera online / offline events, which carry no image or video and would otherwise bury the alerts). Tabs Pending / Valid / Invalid / Exception / All; filters client, exam, priority, centre, camera, date. **Sorted automatically**: priority → most recent → most repeated. Refreshes by itself; new alerts are marked NEW in place. |
-| **Alert review** (`#/alerts/:id`) | **Evidence first**: video player (play / pause / seek / volume / speed / fullscreen) and the alert frame with **what the AI detected drawn on it** (labels, confidence and boxes from Camview's metadata file, e.g. *person ×3*). Images only: a stage with zoom + filmstrip and an optional *snapshot sequence* (clearly labelled — not a video). Missing or broken files show **VIDEO UNAVAILABLE / IMAGE UNAVAILABLE** without breaking the page. A **camera status event** says so (status and time as Camview reported them) and shows the **latest frame and clip Camview has from that camera**, clearly labelled as coming from another alert. Context resolved automatically: Client, Exam, Project, TEC, TC, Centre, Building, Floor, Room, Camera (Camview's own camera number, device id and sub-location). A fixed bottom bar with **VALID · INVALID · EXCEPTION** (keys V / I / E, N = next). |
+| **Alerts** | **Today by default** — pick a date (or *All dates*) to see earlier days. Operational views on the same queue: **Needs review · Client eligible · Client shared · Camera issues · Recording issues** (server-side filters over the canonical alert, `?view=`). One queue across **all exams, clients and projects** you may see; the project switcher in the top bar appears only for people with access to more than one project. Two kinds of record, one at a time: **Alerts** (detections — each row shows the **alert frame** Camview attached, with a play marker when a clip exists) and **Camera status events** (Camview's camera online / offline events, which carry no image or video and would otherwise bury the alerts). Tabs Pending / Valid / Invalid / Exception / All; filters client, exam, priority, centre, camera, date. **Sorted automatically**: priority → most recent → most repeated. Refreshes by itself; new alerts are marked NEW in place. |
+| **Alert review** (`#/alerts/:id`) | **Evidence first** — and the universal workspace: evidence, auto context, camera / recording health, the **client readiness gate** (READY FOR CLIENT / NOT READY with the reason, evaluated exactly as delivery is), data quality and evidence completeness (informational, collapsible), the **event story** (related alerts on the same camera, the event group of repeated activity, a timeline and plain *why this alert* facts — a view over the raw alerts, nothing merged), and the exam phase (PRE-EXAM / LIVE EXAM / POST-EXAM from the exam's own dates). Video player (play / pause / seek / volume / speed / fullscreen) and the alert frame with **what the AI detected drawn on it** (labels, confidence and boxes from Camview's metadata file, e.g. *person ×3*). Images only: a stage with zoom + filmstrip and an optional *snapshot sequence* (clearly labelled — not a video). Missing or broken files show **VIDEO UNAVAILABLE / IMAGE UNAVAILABLE** without breaking the page. A **camera status event** says so (status and time as Camview reported them) and shows the **latest frame and clip Camview has from that camera**, clearly labelled as coming from another alert. Context resolved automatically: Client, Exam, Project, TEC, TC, Centre, Building, Floor, Room, Camera (Camview's own camera number, device id and sub-location). A fixed bottom bar with **ACKNOWLEDGE** (key A — "I have this alert": who picked it up and when; the alert leaves *NOT ACKNOWLEDGED* in the list) and **VALID · INVALID · EXCEPTION** (keys V / I / E, N = next). Deciding an alert nobody acknowledged acknowledges it implicitly. |
 | **Tickets** | One ticket per VALID alert (`TKT-000123`) — never duplicated, even on double-click, retry or reload. Tabs Ready to send / Choose client / Delivered / Withdrawn / Not deliverable; **Send** (one click, or *Send all ready*) and **Withdraw**. |
 | **Exams** | Exam ↔ client ↔ project mapping (optional date window when several exams share a project). This is what makes routing automatic. |
 | **Administration** | Setup (exams, clients, settings, users, roles, nomenclature, rules), monitoring (centre health board, data quality, audit) and the advanced tools. |
 
-**Who sees what (production default, `clientsSeeOperatorValidOnly`)**
+**Who sees what (core rule — cannot be switched off)**
 
 | Audience | Sees |
 |---|---|
@@ -77,12 +140,13 @@ Administration** (everything else is under **Advanced** / Administration).
 | Clients | **Only alerts an operator of the backend team marked VALID.** Camview's own VALID status, delivery on arrival and automatic sharing never make an alert client-visible. This is enforced in the client firewall (portal, alert detail, evidence, analytics, reports), so nothing slips through even if a delivery record exists. |
 | Camera online / offline events | Counted in the *Cameras offline* / *Camera status events* KPIs and camera health only. They cannot be decided and never become tickets. |
 
-When the rule is on (the default), anything delivered earlier without an operator VALID is withdrawn and its automatic ticket cancelled, quietly and once (audit action `delivery.policy_enforced`). Settings › Workflow can switch the rule off; the earlier delivery modes below then apply again.
+The rule is enforced by the server in the client firewall, whatever is stored in settings. Anything an older version delivered without an operator VALID (Camview-VALID auto-share, delivery on arrival) is withdrawn and its automatic ticket cancelled at start-up, quietly and once (audit action `delivery.policy_enforced`). The former *arrival* trigger, *auto-share Camview VALID* and *manual review off* settings are no longer honoured.
 
 **What each decision does**
 
 | Decision | Result |
 |---|---|
+| **ACKNOWLEDGE** | Not a decision. Records who picked the alert up and when (kept once decided); the alert leaves *NOT ACKNOWLEDGED* (Alerts › view *Not acknowledged*, Dashboard KPI *Not acknowledged*). Nothing is delivered, the review revision does not move, and the first acknowledgement stays (a second one is idempotent). |
 | **VALID** | Ticket created (idempotent) → exam + client resolved → **automatic** mode: delivered to the client immediately; **controlled** mode (default): *Ready to send*, one click on **Send**. If the exam has several clients, the reviewer picks one — the only time a choice is asked. |
 | **INVALID** | Never delivered. If it had been delivered, it is withdrawn and the ticket cancelled. |
 | **EXCEPTION** | Not delivered; kept in the Exception tab / KPI for monitoring. |
@@ -175,6 +239,10 @@ Status: Settings › Camera health.
   Camview's project record (HTTP 403). Map ids to the exam's own codes in Settings › Monitored
   projects (per project, or paste a list `id, code[, name]`), or with `CAMVIEW_PROJECT_CODES`.
   When the key may read `/projects/getProject`, the code is taken from Camview automatically.
+  **Add projects by project code** (Settings › Monitored projects): type the exam's code, e.g.
+  `RAILTEL-J&K/JKSSB-AAE-FOC/151126/CCTV-AI/IIL`. The server calls Camview's Project Lookup API
+  (`POST /api/project/listProjectsByClientProjectId`, code in the JSON body) and lists every Camview
+  project carrying it. **Monitor** adds the project and gives it that code, which stays editable in the list.
   **The client and the exam follow from the code** (policy `autoExams`, on by default):
   `MPESB/G2SG4-CRT-2026/220926/LIVECCTV/IIL` → client **MPESB** (created if missing), exam
   **MPESB/G2SG4-CRT** (the year is dropped from the name), project 2773 attached, exam date
@@ -235,7 +303,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Open **http://localhost:5000** and sign in as **`admin` / `admin12345`** (Super Admin —
+Open **http://localhost:5000** and sign in as **`admin`** with the password set in `CAMVIEW_ADMIN_PASSWORD` (backend/.env) (Super Admin —
 set by `CAMVIEW_ADMIN_EMAIL` / `CAMVIEW_ADMIN_PASSWORD`; change the password in the
 user menu). Create further users in **Users**.
 
@@ -291,14 +359,20 @@ critical card → watch the evidence → press **V** → the ticket is created a
    backend — the form is localhost-only to protect the key):
    * **API URL** — prod `https://default.prod.api.camviewai.com/alarms/listAlarms`
      or dev `https://default.dev.api.camviewai.com/alarms/listAlarms` (no `/api` prefix).
-   * **API key** — the raw scoped key (no `Bearer`). Saved to `backend/.env`, never
-     returned to the browser.
+   * **Alarm API key or Bearer token** — the raw scoped key is sent as `Authorization: <key>`.
+     A user login token (`POST /api/auth/login`) is sent as `Authorization: Bearer <token>`:
+     paste it with or without the word `Bearer` (a bare JWT gets the prefix automatically).
+     Login tokens expire after about an hour; a 401/403 then says so. Saved to `backend/.env`,
+     never returned to the browser.
+   * **Project lookup key** — used only for *Add projects by project code*. Blank = the alarm key
+     is used (works when that key is authorised for project lookup); otherwise an authorised key or
+     a Bearer token. **Test project lookup** runs one real lookup for the code you type.
    * **Default project** — the numeric `projectId`.
    * **Test connection** — one real call; shows total alarms, latency, the alarm type
      IDs and camera fields Camview returned.
 2. Switch **Mode → Live**. Live mode uses `backend/camview.db`. On the first live start
    a Super Admin is created (`CAMVIEW_ADMIN_EMAIL` / `CAMVIEW_ADMIN_PASSWORD`, or a
-   random password printed once in the console) — sign in and change it.
+   random password written to initial-admin-password.txt next to the database) — sign in and change it.
 3. **Nomenclature › Import** your master data (CSV/JSON, [§11](#11-nomenclature-master-data)).
    Without it, alarms still work but show `UNMAPPED` context — nothing is invented.
 4. **Nomenclature › Dictionary** — name the numeric alarm types and **confirm the
@@ -644,7 +718,9 @@ project, client, note. Demo seed rows are tagged `DEMO SEED`.
 | `CAMVIEW_MODE` (alias `DATA_MODE=mock\|live`) | live if key set, else demo | `demo` or `live` |
 | `CAMVIEW_DEMO_USERS` | 0 | 1 = create the demo login accounts (demo mode only) |
 | `CAMVIEW_API_URL` | prod URL | must be https on `*.camviewai.com`, ending `/alarms/listAlarms` |
-| `CAMVIEW_API_KEY` | — | raw scoped key, server-side only |
+| `CAMVIEW_API_KEY` | — | raw scoped key, or `Bearer <token>` for a user login token; server-side only |
+| `CAMVIEW_PROJECT_API_KEY` | = `CAMVIEW_API_KEY` | key or `Bearer <token>` for the Project Lookup API |
+| `CAMVIEW_PROJECT_LOOKUP_URL` | from `CAMVIEW_API_URL` | `…/api/project/listProjectsByClientProjectId` |
 | `CAMVIEW_PROJECT_ID` | — | default project in live mode |
 | `CAMVIEW_ADMIN_EMAIL` / `CAMVIEW_ADMIN_PASSWORD` | admin@camview.local / random | first live Super Admin |
 | `CAMVIEW_SECRET_KEY` | generated | session signing key |
@@ -756,7 +832,7 @@ workflowState, visibility, shiftLabel, from, to, sort, dir, page, size`),
 **Review flow**: `GET /api/queue` (filters `status=pending|valid|invalid|exception|all,
 client, exam, priority, centre, camera, search, from, to, page, size`; returns counts,
 facets, freshness), `GET /api/queue/summary?tzOffset=`, `GET /api/queue/:id`,
-`POST /api/queue/:id/decide` `{result, note?, clientId?}`, `GET /api/tickets`
+`POST /api/queue/:id/acknowledge` `{projectId?, note?}`, `POST /api/queue/:id/decide` `{result, note?, clientId?}`, `GET /api/tickets`
 (`delivery, status, client, exam, search`), `POST /api/tickets/:id/send|withdraw`,
 `GET|POST /api/exams`, `PUT /api/exams/:id`. Client: `GET /api/client/alerts?exam=`.
 
@@ -779,6 +855,10 @@ facets, freshness), `GET /api/queue/summary?tzOffset=`, `GET /api/queue/:id`,
 **Live updates**: `GET /api/events` (Server-Sent Events: `version` events only), `dataVersion` in
 `GET /api/status` and `GET /api/notifications`.
 
+**Project lookup**: `POST /api/settings/projects/lookup` `{code, monitor?: [ids]}` → Camview projects
+for a project code (with `monitor`: those are monitored and given the code); `POST /api/config/test-lookup`
+`{code}` (settings.manage).
+
 **Project codes**: `PUT /api/nomenclature/projects/:projectId` `{code, name?}`,
 `PUT /api/nomenclature/project-codes` `{text: "2773, MPESB/…
 …"}` (settings.manage or nomenclature.manage).
@@ -793,13 +873,87 @@ facets, freshness), `GET /api/queue/summary?tzOffset=`, `GET /api/queue/:id`,
 
 ---
 
+## 16a. Reliability model
+
+What keeps working when Camview, the network, the database or a person misbehaves — and how it is verified.
+
+| Concern | How it is handled |
+|---|---|
+| **Canonical alert data** | Every record Camview sends is stored (`alerts` table, `alert_store.py`) as normalized. An alert that was ever listed opens after a refresh, a page shift, a restart or while Camview is down (`alert.source = stored`). |
+| **One alert service** | `alert_service.py` is the single retrieval path (live feed → store → snapshot) and builds the **AlertDTO** (`alert` in every list item and detail, contract version 1). Every field is always present; unknown values say `not_mapped` / `not_available` / `unknown`. |
+| **Media** | Screens get `/api/media/<alarm>/<kind>/<i>` links, resolved when the browser asks: the freshest signed link, re-read from Camview when the stored one expired. 404 / 410 / 504 answers show IMAGE / VIDEO UNAVAILABLE for that item only. `CAMVIEW_MEDIA_MODE=proxy` streams through the server (Range supported). |
+| **Durable work** | Client delivery is a job (`jobs` table: PENDING → RUNNING → DONE / RETRY → FAILED, attempts, next retry, last error). It is written in the same transaction as the decision, runs at once, is retried with exponential backoff and resumes after a restart. Admin: `GET /api/admin/metrics`, `POST /api/admin/jobs/<id>/retry`. |
+| **Transactional VALID** | Decision + ticket + delivery intent commit together or not at all. The screen shows success only after the commit; a locked database answers **503 database_busy** (nothing saved). |
+| **Concurrency** | Each decision carries `expectedRevision`. A decision made on an outdated view is **409 conflict** with the current decision; the same decision twice (double click, a second operator agreeing) is idempotent — one ticket, one delivery. |
+| **Data quality** | A malformed record never stops a refresh and never disappears: it is kept as a data-quality event (Data Quality › *Records received from Camview*: malformed, unknown types, missing mappings, missing evidence). |
+| **Live data** | Stale-while-refresh, retries with backoff, per-project backoff after failures, one global concurrency limit for every Camview call (`CAMVIEW_MAX_CONCURRENCY`), and a circuit breaker (5 consecutive transport / 5xx failures → calls paused 15 s … 5 min). **LIVE** only with a recent successful read; stored data is always **DISCONNECTED**. |
+| **Health** | Camera, recording and stream state are separate facts from a real source; nothing is inferred. Camview's `lastFrameSync` is the camera's *last frame*, never a recording time — recording stays **RECORDING UNKNOWN** unless a recording source reports it. Source selection: *none* · *Camview* · *push* (only while it actually reports) · **HEALTH SOURCE NOT REPORTING** (a token is set but nothing arrived recently — never shown as healthy). |
+| **Identity & ingestion** | An alert is `alarmId + projectId`: a record from another project with the same alarmId never overwrites the stored one (data-quality event `alarm_id_collision`). A project larger than `CAMVIEW_WINDOW_PAGES` × 100 is read as head pages + a rotating sweep with a durable checkpoint (`settings: ingest:<project>`): every page is read once per cycle, everything read is stored, and the status bar says **DATA WINDOW LIMITED** meanwhile. A store failure is shown as **NOT PERSISTED** (status bar, `/readyz` → not ready). Old records read for the first time are not announced as new alerts. |
+| **Production safety** | `/healthz` (liveness) and `/readyz` (database writable, job worker, stable secret). Live mode needs a stable session secret (`CAMVIEW_SECRET_KEY`, or one kept next to the database — never regenerated per restart). Session cookie HttpOnly, SameSite=Lax, Secure on HTTPS (`CAMVIEW_TRUST_PROXY=1` behind a TLS proxy). A generated admin password goes to `initial-admin-password.txt`, never to the log. |
+| **Observability** | Every answer carries `X-Request-ID` (also in error bodies and every log line). Alert operations log one line: `op=… outcome=… requestId=… alarmId=… projectId=… userId=…` — never keys, passwords or signed links. |
+
+## 16b. Backup, restore, disaster recovery
+
+A Docker volume is storage, not a backup.
+
+**Backup (automatic, live mode).** Once a day the job worker writes a consistent copy of the database with SQLite's
+online-backup API (safe while the app runs), **verifies it** (`PRAGMA integrity_check` + required tables — the
+restore test) and keeps the newest `CAMVIEW_BACKUP_KEEP` (14) copies in `CAMVIEW_BACKUP_DIR` (default
+`backups/` next to the database, i.e. inside the data volume). `GET /api/admin/metrics` → `backup` shows the newest
+copy, its age and `overdue`. **Copy the backup directory off the server** (object storage, another host) — a copy on
+the same disk does not survive the loss of that disk.
+
+```bash
+docker exec camview python backup.py create          # a verified backup now
+docker exec camview python backup.py list
+docker exec camview python backup.py verify /app/backend/data/backups/camview-20260928-020000.db
+```
+
+**Restore.** Stop the app, restore, start it again (the replaced database is kept as `pre-restore-<time>.db`):
+
+```bash
+docker stop camview
+docker run --rm -v camview_data:/app/backend/data --env-file /opt/camview/.env <image> \
+       python backup.py restore /app/backend/data/backups/camview-<time>.db
+docker start camview && curl -fsS http://localhost:5000/readyz
+```
+
+**Disaster recovery.** New server → install Docker → recreate `/opt/camview/.env` from your secret store (the same
+`CAMVIEW_SECRET_KEY`, or users sign in again) → create the `camview_data` volume → copy the newest off-site backup
+into it and run the restore command above → start the container → `/readyz` must answer `ready` (database writable,
+integrity ok, job worker running, stable secret). Unfinished client deliveries resume from the durable job table;
+alerts are re-read from Camview on the first refresh. Start-up runs an integrity check after migrations; a damaged
+database makes `/readyz` fail (`checks.integrity`) — restore the newest verified backup.
+
 ## 17. Testing
 
 ```bash
 cd backend
 pip install -r requirements-dev.txt
-pytest -q
+pytest -q                          # unit + integration + failure injection + security (fake Camview, no network)
+cd .. && node --test "frontend/tests/*.test.mjs"   # frontend unit tests
+python -m pytest e2e -q            # browser end-to-end: real server (live mode) + fake Camview, Playwright
+                                   # needs ffmpeg (test clip) and Edge (E2E_BROWSER=chromium for Playwright's Chromium)
 ```
+
+Robustness suites: `test_alert_contract.py` (list ↔ detail contract, alerts stay openable after restart / page
+shift / outage), `test_decisions_durable.py` (transactional VALID, conflicts, simultaneous decisions, durable
+delivery, restart during delivery, locked database), `test_failure_injection.py` (Camview 403 / 500 / timeout /
+malformed / empty, circuit breaker, backoff, quarantine, mapping and health gaps), `test_media_resolver.py`
+(expired links, 404 / 403 / 410 / timeout, Range), `test_client_firewall_matrix.py` (every role against the API,
+client isolation, routing), `test_prod_safety.py` (health endpoints, cookies, secrets, request ids),
+`test_production_readiness.py` (recording truth, silent health source, persistence failure, id collisions, window
+sweep, 429 / DNS / reset, busy database after commit, duplicate job runs, indexes, integrity, backup / restore),
+`test_workspace_intelligence.py` (exam phase, data quality, evidence completeness, the client readiness gate, the
+event story and its idempotent grouping, the queue views), `test_performance.py` (100 / 1,000 / 5,000 alerts
+through the real path with timing budgets, one Camview call per page, no repeated calls inside the cache window,
+every alert openable from the store after a restart; `-s` prints the timings).
+Run the browser suite on its own: it is timing-based and a CPU-saturated machine (the backend suite running at
+the same time) can make a correct build miss a wait.
+Browser scenarios A–P (`e2e/`): the full VALID path to the client portal, INVALID, EXCEPTION, Camview-VALID only,
+several exams and clients, camera / recording states, broken video / image / both, live arrival while a video
+plays, restart during delivery, double VALID, two operators at once. The restart scenario uses a test-only
+fault switch (`CAMVIEW_FAULTS=delivery_fail`), inert unless that variable is set — never set it in production.
 
 The suite (133 tests) covers activity grouping (nothing hidden), context completeness,
 since-last-visit, the daily brief, scoped comparison, watchlist, snooze and preferences,
@@ -887,7 +1041,7 @@ object's fields (hence the nomenclature import).
 | Cameras offline KPI shows — | No camera status received yet: it appears after the first live refresh (Camview `frameSyncStatus`) or when a monitoring source pushes status. |
 | Priority labels "not confirmed" | Confirm the mapping in Nomenclature › Dictionary. |
 | Connection form disabled | Open the UI on the server itself (localhost) or set `CAMVIEW_ALLOW_REMOTE_SETUP=1`. |
-| First live login | Password is `CAMVIEW_ADMIN_PASSWORD` or printed once in the console. |
+| First live login | Password is `CAMVIEW_ADMIN_PASSWORD`, or in `initial-admin-password.txt` next to the database (never in the log). |
 | DELAYED / DISCONNECTED | Last successful refresh is old / failing; data shown is the last good data. |
 | LIVE, but every alert is months old | Camview is not producing alerts for the monitored project id (the exam has ended). Settings › Monitored projects › *Find the running project* shows which project ids your key can read and when each last raised an alert. If none is recent, the running exam is on a project this key cannot read — ask Camview for the key/project of the running exam. |
 | Access denied / not available | Your role or scope doesn't include it — ask an administrator. |

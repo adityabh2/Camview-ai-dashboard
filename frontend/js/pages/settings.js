@@ -67,20 +67,16 @@ export default {
       const body = $('#s-body', el);
       if (tab === 'workflow') {
         const mode = p.deliveryMode || 'controlled';
-        const trig = p.deliveryTrigger === 'arrival' ? 'arrival' : 'valid';
         body.innerHTML = card({ title: `${icon('zap')} Client delivery (alert → ticket → client)`, sub: 'When and how alerts reach the exam’s client. INVALID and EXCEPTION alerts are never delivered (and are withdrawn if they had been).',
-          body: `<div class="banner ${p.clientsSeeOperatorValidOnly !== false ? 'info' : 'warning'}" style="margin-bottom:12px">${icon('shield')}<div class="grow">
-              <label class="check" style="margin:0"><input type="checkbox" id="p-opvalid" ${p.clientsSeeOperatorValidOnly !== false ? 'checked' : ''} ${dis}> <b>Clients see only alerts our operations team marked VALID</b></label>
-              <div class="muted" style="font-size:12px;margin-top:3px">On (recommended): Camview's own status, delivery on arrival and automatic sharing never reach a client — the options below that would do so are ignored. Administrators still see every verdict. Turning it on withdraws anything delivered without an operator's VALID.</div></div></div>
+          body: `<div class="banner info" style="margin-bottom:12px">${icon('shield')}<div class="grow">
+              <label class="check" style="margin:0"><input type="checkbox" id="p-opvalid" checked disabled> <b>Clients see only alerts our operations team marked VALID</b> <span class="b outline">CORE RULE</span></label>
+              <div class="muted" style="font-size:12px;margin-top:3px">Always on, enforced by the server: Camview's own status, delivery on arrival and automatic sharing never reach a client. Administrators still see every verdict.</div></div></div>
             <div class="field"><label>When is an alert sent to the client?</label>
-            <label class="check" style="margin-bottom:6px"><input type="radio" name="p-trigger" value="arrival" ${trig === 'arrival' ? 'checked' : ''} ${dis}> <b>On arrival — no human intervention</b>: every detection alert is delivered the moment Camview sends it (a 12:00 alert reaches the client at 12:00). Camera status events are never sent. Marking it INVALID / EXCEPTION withdraws it.</label>
-            <label class="check" style="margin-bottom:12px"><input type="radio" name="p-trigger" value="valid" ${trig === 'valid' ? 'checked' : ''} ${dis}> <b>When VALID</b>: only after Camview or an operator marks the alert VALID.</label></div>
+            <label class="check" style="margin-bottom:12px"><input type="radio" name="p-trigger" value="valid" checked disabled> <b>When the operations team marks it VALID</b> — the only way an alert reaches a client.</label></div>
             <div class="grid g-2"><div>
             <label class="check" style="margin-bottom:8px"><input type="radio" name="p-mode" value="controlled" ${mode === 'controlled' ? 'checked' : ''} ${dis}> <b>Controlled</b> — VALID creates the ticket; a person with “publish” permission sends it with one click</label>
             <label class="check" style="margin-bottom:12px"><input type="radio" name="p-mode" value="automatic" ${mode === 'automatic' ? 'checked' : ''} ${dis}> <b>Automatic</b> — VALID creates the ticket and delivers it to the client immediately</label>
-            <label class="check" style="margin-bottom:4px"><input type="checkbox" id="p-autoshare" ${p.autoShareValid ? 'checked' : ''} ${dis}> <b>Send alerts the Camview API marks VALID</b> to the client automatically (no operator action)</label>
-            <div class="row tight" style="margin:0 0 10px 23px;font-size:12px"><span class="muted">age limit</span><input class="input" type="number" min="1" id="p-autohours" max="8760" value="${p.autoShareHours ?? ''}" placeholder="none" style="width:80px" ${dis}><span class="muted">hours (empty = every valid alert)</span></div>
-            <label class="check" style="margin-bottom:8px"><input type="checkbox" id="p-manual" ${p.manualReview ? 'checked' : ''} ${dis}> Manual review — show VALID / INVALID / EXCEPTION buttons (off = Camview's status decides, nothing to mark)</label>
+            <label class="check" style="margin-bottom:8px"><input type="checkbox" id="p-manual" checked disabled> Manual review — VALID / INVALID / EXCEPTION by the operations team (required by the core rule)</label>
             <label class="check" style="margin-bottom:8px"><input type="checkbox" id="p-autonom" ${p.autoNomenclature !== false ? 'checked' : ''} ${dis}> Build nomenclature automatically from Camview camera data (Project › Centre › Location › Camera; imported master data wins)</label>
             <label class="check" style="margin-bottom:8px"><input type="checkbox" id="p-remarks" ${p.requireRemarks ? 'checked' : ''} ${dis}> Require a remark on every decision (off = one-click decisions)</label>
             <label class="check" style="margin-bottom:8px"><input type="checkbox" id="p-sendfour" ${p.sendFourEyes ? 'checked' : ''} ${dis}> Controlled mode: the sender cannot be the person who marked it VALID</label></div>
@@ -97,24 +93,20 @@ export default {
             <label class="check" style="margin-bottom:10px"><input type="checkbox" id="p-evidence" ${p.requireEvidence ? 'checked' : ''} ${dis}> Sharing requires at least one evidence item</label>
             <label class="check" style="margin-bottom:10px"><input type="checkbox" id="p-context" ${p.requireContext ? 'checked' : ''} ${dis}> Sharing requires a camera mapped in the nomenclature</label>
             <label class="check" style="margin-bottom:10px"><input type="checkbox" id="p-ticket" ${p.clientShowTicket ? 'checked' : ''} ${dis}> Default: include ticket numbers (clients' own policy still applies)</label>
-            <div class="field" style="margin-top:12px"><label>What counts as "valid" for sharing</label><select class="select" id="p-valid" ${dis}>
-              <option value="either" ${p.validSource === 'either' ? 'selected' : ''}>Camview Valid OR operator marked valid</option>
-              <option value="ops" ${p.validSource === 'ops' ? 'selected' : ''}>Only an operator decision in Command Center</option>
-              <option value="camview" ${p.validSource === 'camview' ? 'selected' : ''}>Only Camview's lastActionType = 1</option></select>
-              <div class="hint">An operator marking invalid/exception always blocks sharing.</div></div></div>
+            <div class="field" style="margin-top:12px"><label>What counts as "valid" for sharing</label><select class="select" id="p-valid" disabled>
+              <option value="ops" selected>Only an operator decision in Command Center</option></select>
+              <div class="hint">Core rule: Camview's own status never makes an alert shareable.</div></div></div>
             <div><div class="field"><label>Context levels shown to clients by default</label>
               ${LEVELS.map((l) => `<label class="check" style="margin-bottom:5px"><input type="checkbox" data-lvl="${l}" ${p.clientContextLevels.includes(l) ? 'checked' : ''} ${dis}> ${l.toUpperCase()}</label>`).join('')}
               <div class="hint">The publisher can still change this per alert in the share review.</div></div></div></div>
             ${edit ? '<div class="row"><span class="grow"></span><button class="btn primary" id="save-wf">Save policy</button></div>' : ''}` });
         $('#save-dl', body)?.addEventListener('click', () => savePolicy({
-          deliveryMode: $('[name="p-mode"]:checked', body).value, deliveryTrigger: $('[name="p-trigger"]:checked', body).value, requireRemarks: $('#p-remarks', body).checked,
-          autoShareValid: $('#p-autoshare', body).checked, autoShareHours: $('#p-autohours', body).value === '' ? null : Number($('#p-autohours', body).value),
-          manualReview: $('#p-manual', body).checked, autoNomenclature: $('#p-autonom', body).checked,
-          clientsSeeOperatorValidOnly: $('#p-opvalid', body).checked,
+          deliveryMode: $('[name="p-mode"]:checked', body).value, requireRemarks: $('#p-remarks', body).checked,
+          autoNomenclature: $('#p-autonom', body).checked,
           sendFourEyes: $('#p-sendfour', body).checked, autoEvidence: $('#p-autoev', body).value }));
         $('#save-wf', body)?.addEventListener('click', () => savePolicy({
           requireApproval: $('#p-approval', body).checked, fourEyes: $('#p-foureyes', body).checked, requireEvidence: $('#p-evidence', body).checked,
-          requireContext: $('#p-context', body).checked, clientShowTicket: $('#p-ticket', body).checked, validSource: $('#p-valid', body).value,
+          requireContext: $('#p-context', body).checked, clientShowTicket: $('#p-ticket', body).checked,
           clientContextLevels: $$('[data-lvl]:checked', body).map((x) => x.dataset.lvl) }));
       } else if (tab === 'intelligence') {
         body.innerHTML = card({ title: `${icon('zap')} Intelligence thresholds`, sub: 'Every intelligent alert shows the threshold it used in "Why am I seeing this?"',
@@ -144,9 +136,13 @@ export default {
           ${card({ title: `${icon('key')} Camview connection`, sub: 'The API key is stored only on the server and is never shown again',
             body: `${!setup ? `<div class="banner warning">${icon('lock')}<div>Connection settings can only be changed from the computer running the backend (open <span class="mono">http://localhost:5000</span> there) by a user with settings.manage, or by editing <span class="mono">backend/.env</span>.</div></div>` : ''}
               <div class="field"><label>API URL</label><input class="input" id="c-url" value="${esc(c.apiUrl)}" ${setup ? '' : 'disabled'}><div class="hint">Must be https://…camviewai.com/…/alarms/listAlarms (no /api prefix).</div></div>
-              <div class="field"><label>API key</label><input class="input" id="c-key" type="password" autocomplete="off" placeholder="${c.apiConfigured ? 'A key is saved — leave blank to keep it' : 'Paste the raw key (no Bearer)'}" ${setup ? '' : 'disabled'}></div>
+              <div class="field"><label>Alarm API key or Bearer token ${c.apiKeyKind ? `<span class="b outline">${c.apiKeyKind === 'bearer' ? 'Bearer token saved' : 'API key saved'}</span>` : ''}</label><input class="input" id="c-key" type="password" autocomplete="off" placeholder="${c.apiConfigured ? 'Saved — leave blank to keep it' : 'Raw scoped key, or Bearer <token>'}" ${setup ? '' : 'disabled'}><div class="hint">Raw scoped key is sent as it is. A login token is sent as <span class="mono">Bearer &lt;token&gt;</span> — paste it with or without the word Bearer. Login tokens expire after about an hour.</div></div>
+              <div class="field"><label>Project lookup key ${c.projectKeyConfigured ? `<span class="b outline">${c.projectKeyKind === 'bearer' ? 'Bearer token saved' : 'API key saved'}</span>` : '<span class="muted">(blank = use the alarm key)</span>'}</label><input class="input" id="c-pkey" type="password" autocomplete="off" placeholder="${c.projectKeyConfigured ? 'Saved — leave blank to keep it' : 'Key authorised for listProjectsByClientProjectId, or Bearer <token>'}" ${setup ? '' : 'disabled'}>
+                ${setup && c.projectKeyConfigured ? '<label class="check" style="margin-top:4px"><input type="checkbox" id="c-pkey-clear"> Remove saved project lookup key</label>' : ''}
+                <div class="hint">Used to find Camview projects from a project code. Leave blank to use the alarm key (works when that key is authorised for project lookup); otherwise paste an authorised key or a Bearer token. URL: <span class="mono">${esc(c.projectLookupUrl || '')}</span></div></div>
+              <div class="field"><label>Test project code</label><input class="input mono" id="c-code" placeholder="e.g. RAILTEL-J&amp;K/JKSSB-AAE-FOC/151126/CCTV-AI/IIL" autocomplete="off" spellcheck="false"></div>
               <div class="field"><label>Default project ID</label><input class="input" id="c-proj" value="${esc(c.defaultProjectId || '')}" ${setup ? '' : 'disabled'}></div>
-              <div class="row">${setup ? '<button class="btn primary" id="c-save">Save connection</button>' : ''}${edit ? '<button class="btn" id="c-test">Test connection</button><button class="btn ghost" id="c-raw">Raw sample</button>' : ''}</div>
+              <div class="row">${setup ? '<button class="btn primary" id="c-save">Save connection</button>' : ''}${edit ? '<button class="btn" id="c-test">Test connection</button><button class="btn" id="c-test-lookup">Test project lookup</button><button class="btn ghost" id="c-raw">Raw sample</button>' : ''}</div>
               <div id="c-out" style="margin-top:12px"></div>
               <dl class="kv" style="margin-top:12px"><dt>Key configured</dt><dd>${c.apiConfigured ? 'Yes' : 'No'}</dd><dt>Timeout</dt><dd>${esc(c.timeout)} s</dd><dt>Working window</dt><dd>${esc(c.windowPages)} × 100 newest alarms</dd><dt>Server cache</dt><dd>${esc(c.cacheSeconds)} s</dd></dl>` })}</div>`;
         $('#mode-btn', body)?.addEventListener('click', async () => {
@@ -157,8 +153,8 @@ export default {
         });
         $('#c-save', body)?.addEventListener('click', async () => {
           try {
-            await api.post('/api/config/setup', { apiUrl: $('#c-url', body).value.trim(), apiKey: $('#c-key', body).value.trim(), projectId: $('#c-proj', body).value.trim() || undefined });
-            $('#c-key', body).value = ''; toast('Connection saved', 'success'); load();
+            await api.post('/api/config/setup', { apiUrl: $('#c-url', body).value.trim(), apiKey: $('#c-key', body).value.trim(), projectApiKey: $('#c-pkey', body).value.trim(), projectApiKeyClear: !!$('#c-pkey-clear', body)?.checked, projectId: $('#c-proj', body).value.trim() || undefined });
+            $('#c-key', body).value = ''; $('#c-pkey', body).value = ''; toast('Connection saved', 'success'); load();
           } catch (e) { toast(e.message, 'error'); }
         });
         $('#c-test', body)?.addEventListener('click', async () => {
@@ -168,6 +164,15 @@ export default {
             const r = await api.post('/api/config/test', { projectId: $('#c-proj', body).value.trim() || undefined });
             out.innerHTML = `<div class="banner info">${icon('check')}<div><b>Connected.</b> ${fmt.n(r.totalElements)} alarms · ${r.latencyMs} ms · alarm type IDs seen: ${esc(r.alarmTypesSeen.join(', ') || '—')} · camera fields: <span class="mono">${esc(r.cameraFields.join(', ') || '—')}</span></div></div>`;
           } catch (e) { out.innerHTML = `<div class="banner critical">${icon('alert')}<div><b>Connection failed.</b> ${esc(e.message)}</div></div>`; }
+        });
+        $('#c-test-lookup', body)?.addEventListener('click', async () => {
+          const out = $('#c-out', body), code = $('#c-code', body).value.trim();
+          if (!code) { toast('Enter a project code to test the lookup', 'error'); return; }
+          out.innerHTML = '<div class="muted">Testing project lookup…</div>';
+          try {
+            const r = await api.post('/api/config/test-lookup', { code });
+            out.innerHTML = `<div class="banner info">${icon('check')}<div><b>Project lookup works.</b> ${r.count} project(s) for <span class="mono">${esc(code)}</span>${r.projectIds.length ? `: ids ${esc(r.projectIds.join(', '))}` : ''} · ${r.latencyMs} ms</div></div>`;
+          } catch (e) { out.innerHTML = `<div class="banner critical">${icon('alert')}<div><b>Project lookup failed.</b> ${esc(e.message)}</div></div>`; }
         });
         $('#c-raw', body)?.addEventListener('click', async () => {
           const out = $('#c-out', body);
@@ -197,6 +202,11 @@ export default {
             ${edit ? '<button class="btn primary" id="pr-save">Save</button>' : ''}
             ${feedRows ? `<div class="table-wrap" style="margin-top:14px"><table class="t"><thead><tr><th>Project</th><th>Monitored because</th><th>Alerts in Camview</th><th>Newest alert</th><th></th></tr></thead><tbody>${feedRows}</tbody></table></div>` : ''}
             ${staleRows ? `<div class="muted" style="margin-top:14px;font-weight:700">Old projects (not monitored)</div><div class="table-wrap"><table class="t"><tbody>${staleRows}</tbody></table></div>` : ''}` })
+          + (edit && session.mode !== 'demo' ? card({ title: `${icon('search')} Add projects by project code`, sub: 'Type the exam’s project code. Camview’s Project Lookup API returns every Camview project carrying it. <b>Register the code</b> to monitor all of them under the code (the dashboard then shows the code as a tab); projects Camview adds later under the same code are picked up by themselves.',
+            body: `<div class="row" style="gap:8px;flex-wrap:wrap;align-items:end">
+                <label class="field grow" style="margin:0;min-width:320px">Project code <input class="input mono" id="lk-code" placeholder="e.g. RAILTEL-J&amp;K/JKSSB-AAE-FOC/151126/CCTV-AI/IIL" autocomplete="off" spellcheck="false"></label>
+                <button class="btn primary" id="lk-run">${icon('search', 's')} Find projects</button></div>
+              <div id="lk-out" style="margin-top:12px"></div>` }) : '')
           + (edit ? card({ title: `${icon('edit')} Project codes`, sub: 'Camview’s API sends only the project number. Match each project id to the exam’s own code — one line per project: <span class="mono">id, code[, name]</span>. The client and the exam follow from the code (MPESB/G2SG4-CRT-2026/… → client MPESB, exam MPESB/G2SG4-CRT; another date of the same exam joins it; another year keeps its year so names never collide). Camview’s own project record is used automatically when your key may read it.',
             body: `<textarea class="input mono" id="pc-map" rows="4" style="width:100%;font-size:12px" placeholder="2773, MPESB/G2SG4-CRT-2026/220926/LIVECCTV/IIL, MPESB Group 2 Sub Group 4&#10;2872, OTHER/CODE"></textarea>
               <div class="row" style="margin-top:8px"><span class="grow"></span><button class="btn primary" id="pc-apply">${icon('check', 's')} Apply mapping</button></div>` }) : '')
@@ -218,6 +228,32 @@ export default {
           try { await api.put('/api/settings/projects', { projects: $('#pr-ids', body).value.split(',').map((x) => x.trim()).filter(Boolean) }); toast('Saved — sign in again to refresh your project list', 'success'); load(); }
           catch (e) { toast(e.message, 'error'); }
         });
+        const lookup = async (monitor) => {
+          const code = $('#lk-code', body).value.trim(), out = $('#lk-out', body), btn = $('#lk-run', body);
+          if (!code) { toast('Enter a project code', 'error'); return; }
+          btn.disabled = true; if (!monitor) out.innerHTML = skeleton(3, 22);
+          try {
+            const r = await api.post('/api/settings/projects/lookup', monitor ? { code, monitor } : { code });
+            if (ctx.isStale() || tab !== 'projects') return;
+            if (r.applied.length) toast(`Monitoring ${r.applied.join(', ')} as ${code} — sign in again to refresh your project list`, 'success');
+            out.innerHTML = r.projects.length ? `<div class="row" style="margin-bottom:6px"><span class="muted grow">${r.count} Camview project${r.count === 1 ? '' : 's'} for <span class="mono">${esc(r.code)}</span></span>
+                <button class="btn sm primary" data-lk-register>${icon('plus', 's')} Register this code</button></div>
+              <div class="table-wrap"><table class="t"><thead><tr><th>Project id</th><th>Name</th><th>Status</th><th>Start</th><th>End</th><th>Description</th><th></th></tr></thead><tbody>
+              ${r.projects.map((p) => `<tr><td class="mono">${esc(p.projectId)}</td><td>${esc(p.name || '—')}</td><td>${esc(p.status || '—')}</td><td>${esc(p.startDate || '—')}</td><td>${esc(p.endDate || '—')}</td><td class="muted">${esc(p.description || '')}</td>
+                <td>${p.monitored ? '<span class="b outline">monitored</span>' : `<button class="btn sm" data-lk="${esc(p.projectId)}">${icon('plus', 's')} Monitor</button>`}</td></tr>`).join('')}</tbody></table></div>`
+              : `<div class="muted">No Camview project carries the code <span class="mono">${esc(r.code)}</span>. Check the spelling (it must match exactly), or that the project has this code set in Camview.</div>`;
+            out.querySelectorAll('[data-lk]').forEach((b) => b.addEventListener('click', () => lookup([b.dataset.lk])));
+            out.querySelector('[data-lk-register]')?.addEventListener('click', async (ev) => {
+              ev.currentTarget.disabled = true;
+              try { const x = await api.post('/api/project-codes', { code }); toast(`Registered ${x.code}: ${x.projects.length} project(s) monitored`, 'success'); load(); }
+              catch (err) { toast(err.message, 'error'); ev.currentTarget.disabled = false; }
+            });
+            if (r.applied.length) setTimeout(() => { if (!ctx.isStale() && tab === 'projects') load(); }, 1500);
+          } catch (e) { out.innerHTML = errorBox(e); }
+          btn.disabled = false;
+        };
+        $('#lk-run', body)?.addEventListener('click', () => lookup());
+        $('#lk-code', body)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') lookup(); });
         $('#pc-apply', body)?.addEventListener('click', async () => {
           try { const r = await api.put('/api/nomenclature/project-codes', { text: $('#pc-map', body).value }); toast(`${r.applied.length} project code(s) applied — sign in again to refresh`, 'success'); load(); }
           catch (e) { toast(e.message, 'error'); }
@@ -266,7 +302,7 @@ export default {
           body.innerHTML = card({ title: `${icon('camera')} Camera & recording health source`,
             sub: 'Camera connection and recording are shown only from a real source — never from alarm names.',
             body: `<dl class="kv" style="grid-template-columns:190px 1fr">
-                <dt>Source</dt><dd>${h.mode === 'push' ? '<span class="b vis-shared">Push adapter enabled</span>' : h.mode === 'camview' ? '<span class="b vis-shared">Camview</span> <span class="muted">— camera.frameSyncStatus / lastFrameSync, imported with every live refresh (recording not reported)</span>' : '<span class="b vis-internal">Not connected</span> <span class="muted">— the review screen shows CAMERA HEALTH UNAVAILABLE</span>'}</dd>
+                <dt>Source</dt><dd>${h.mode === 'push' ? '<span class="b vis-shared">Push adapter reporting</span>' : h.mode === 'push_not_reporting' ? '<span class="b vis-withdrawn">HEALTH SOURCE NOT REPORTING</span> <span class="muted">— a token is set but nothing arrived recently</span>' : h.mode === 'camview' ? '<span class="b vis-shared">Camview</span> <span class="muted">— camera.frameSyncStatus / lastFrameSync, imported with every live refresh (recording not reported)</span>' : '<span class="b vis-internal">Not connected</span> <span class="muted">— the review screen shows CAMERA HEALTH UNAVAILABLE</span>'}</dd>
                 <dt>Cameras reporting</dt><dd class="num">${fmt.n(h.camerasReporting)}</dd>
                 <dt>Last report</dt><dd>${h.lastReportAt ? `${fmt.dt(h.lastReportAt)} · ${fmt.rel(h.lastReportAt)}` : '—'}</dd>
                 <dt>Heartbeat considered stale after</dt><dd>${h.staleSeconds} s <span class="muted">(CAMVIEW_HEALTH_STALE_SECONDS)</span></dd></dl>

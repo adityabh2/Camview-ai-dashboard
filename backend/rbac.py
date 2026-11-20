@@ -169,8 +169,56 @@ def current_user():
         u = load_user(uid) if uid else None
         if u and session.get("pwv") != u.get("pwChangedAt"):
             u = None                     # password changed or reset since this session signed in: sign in again
+        if u is not None and client_only_door() and u.get("audience") != "client":
+            u = None                     # the client-portal door never serves an internal account
+        if u is None and _no_login():
+            u = _no_login_user()
         g.user = u
     return g.user
+
+
+def listener_port():
+    """The port of the socket this request arrived on (the server's own side of the connection).
+    Never taken from the Host header, which the caller controls."""
+    env = request.environ
+    sock = env.get("gunicorn.socket") or env.get("werkzeug.socket")
+    if sock is not None:
+        try:
+            return str(sock.getsockname()[1])
+        except (OSError, IndexError, TypeError):
+            return None
+    return None
+
+
+def client_only_door():
+    import config
+    ports = getattr(config, "CLIENT_ONLY_PORTS", set())
+    return bool(ports) and listener_port() in ports
+
+
+def no_login_here():
+    """No-login applies on this request: switched on, and (when doors are configured) arrived on an admin door."""
+    import config
+    if not getattr(config, "NO_LOGIN", False) or client_only_door():
+        return False
+    ports = getattr(config, "NO_LOGIN_PORTS", set())
+    return not ports or listener_port() in ports
+
+
+def _no_login():
+    return no_login_here()
+
+
+def _no_login_user():
+    """CAMVIEW_NO_LOGIN=1: requests without a session run as the built-in Super Admin (created if missing)."""
+    row = db.one("SELECT u.id FROM users u WHERE u.role_id='super_admin' AND u.status='active' "
+                 "ORDER BY u.created_at, u.rowid LIMIT 1")
+    if not row:
+        import bootstrap
+        bootstrap.ensure_admin(force=True)
+        row = db.one("SELECT u.id FROM users u WHERE u.role_id='super_admin' AND u.status='active' "
+                     "ORDER BY u.created_at, u.rowid LIMIT 1")
+    return load_user(row["id"]) if row else None
 
 
 def has(user, perm):

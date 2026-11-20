@@ -17,6 +17,20 @@ export default {
       <div class="row">${editable ? `<button class="btn primary" id="c-new">${icon('plus', 's')} New client</button>` : ''}</div></div>
       <div id="c-body">${skeleton(4, 80)}</div>`;
 
+    // A client is linked to PROJECT CODES (its own id for the exam, e.g. RAILTEL-J&K/JKSSB-AAE-FOC/151126/CCTV-AI/IIL),
+    // never to Camview's numbers: the projects behind a code are found by Camview's Project Lookup.
+    const codedIds = () => new Set((data.codes || []).flatMap((c) => c.projectIds || []));
+    const uncoded = (ids) => ids.filter((p) => !codedIds().has(String(p)));
+    const codePicker = (selected, dis, attr) => `
+      ${(data.codes || []).map((c) => `<label class="check" style="margin-bottom:6px"><input type="checkbox" ${attr}="${esc(c.code)}" ${selected.includes(c.code) ? 'checked' : ''} ${dis}><span class="mono" style="overflow-wrap:anywhere">${esc(c.code)}</span></label>`).join('')}
+      ${dis ? '' : `<div class="field" style="margin-top:8px"><label>Add a project code</label><input class="input mono" data-newcode placeholder="e.g. RAILTEL-J&amp;K/JKSSB-AAE-FOC/151126/CCTV-AI/IIL" autocomplete="off" spellcheck="false">
+        <div class="hint">Type it exactly as set in Camview. Its projects are found automatically, and projects added later under the same code are shared with this client too.</div></div>`}`;
+    const pickedCodes = (box, attr) => {
+      const out = $$(`[${attr}]:checked`, box).map((x) => x.getAttribute(attr));
+      const typed = ($('[data-newcode]', box)?.value || '').trim();
+      if (typed && !out.includes(typed)) out.push(typed);
+      return out;
+    };
     const projLabel = (id) => { const p = data.projects.find((x) => x.externalId === String(id)); return p ? `${p.code}${p.name && p.name !== p.code ? ' · ' + p.name : ''}` : String(id); };
 
     const load = async () => {
@@ -45,8 +59,10 @@ export default {
               <div class="kpi" style="padding:8px"><div class="k-label">Acknowledged</div><div class="k-value" style="font-size:18px">${fmt.n(c.acknowledged)}</div></div>
               <div class="kpi" style="padding:8px"><div class="k-label">Users</div><div class="k-value" style="font-size:18px">${c.users.length}</div></div>
               <div class="kpi" style="padding:8px"><div class="k-label">Reports</div><div class="k-value" style="font-size:18px">${fmt.n(c.reports)}</div></div></div>
-            <div class="muted" style="font-size:11.5px;margin-bottom:4px">Assigned projects</div>
-            <div class="row tight" style="margin-bottom:10px">${c.projects.length ? c.projects.map((p) => `<span class="b outline mono">${esc(projLabel(p))}</span>`).join('') : '<span class="muted">None — the client sees nothing</span>'}</div>
+            <div class="muted" style="font-size:11.5px;margin-bottom:4px">Project codes</div>
+            <div class="row tight" style="margin-bottom:10px;flex-wrap:wrap">${(c.projectCodes || []).map((code) => `<span class="b outline mono" style="white-space:normal;overflow-wrap:anywhere">${esc(code)}</span>`).join('')}
+              ${uncoded(c.projects).map((p) => `<span class="b outline mono" title="Project without a code">${esc(projLabel(p))}</span>`).join('')}
+              ${!(c.projectCodes || []).length && !uncoded(c.projects).length ? '<span class="muted">None — the client sees nothing</span>' : ''}</div>
             <div class="cl-head"><span>${icon('key', 's')} Client logins <b>${c.users.length}</b></span>${data.canManageLogins ? `<button class="btn sm primary" data-cl-new="${esc(c.id)}">${icon('plus', 's')} Add login</button>` : ''}</div>
             <div data-cl-list="${esc(c.id)}">${loginListHtml(c.users, { canManage: data.canManageLogins, examsById: Object.fromEntries((c.exams || []).map((e) => [e.id, e.name])) })}</div>
             <div class="row" style="margin-top:10px"><button class="btn sm" data-open="${esc(c.id)}">${icon(editable ? 'edit' : 'eye', 's')} ${editable ? 'Manage' : 'Details'}</button>
@@ -73,10 +89,12 @@ export default {
         body: `<div class="field"><label>Name</label><input class="input" id="cl-name" value="${esc(c.name)}" ${dis}></div>
           <div class="field"><label>Contact</label><input class="input" id="cl-contact" value="${esc(c.contact || '')}" ${dis}></div>
           <div class="field"><label>Status</label><select class="select" id="cl-status" ${dis}><option value="active">Active</option><option value="inactive" ${c.status === 'inactive' ? 'selected' : ''}>Inactive — all client users lose access</option></select></div>
-          <div class="section-title">Assigned projects</div>
-          <div class="banner warning">${icon('alert')}<div>Removing a project <b>immediately</b> removes this client's access to every alert shared from it. Access always follows the current assignment.</div></div>
-          ${data.projects.map((p) => `<label class="check" style="margin-bottom:6px"><input type="checkbox" data-proj="${esc(p.externalId)}" ${c.projects.includes(p.externalId) ? 'checked' : ''} ${dis}><span class="mono">${esc(p.code)}</span><span class="muted">${esc(p.name && p.name !== p.code ? p.name : '')}</span></label>`).join('') || '<span class="muted">No projects available to you.</span>'}
-          ${c.projects.filter((p) => !data.projects.some((x) => x.externalId === p)).map((p) => `<label class="check"><input type="checkbox" data-proj="${esc(p)}" checked ${dis}><span class="mono">${esc(p)}</span><span class="muted">(outside your scope)</span></label>`).join('')}
+          <div class="section-title">Project codes</div>
+          <div class="banner warning">${icon('alert')}<div>Removing a code <b>immediately</b> removes this client's access to every alert shared from its projects. Access always follows the current assignment.</div></div>
+          ${codePicker(c.projectCodes || [], dis, 'data-pcode')}
+          ${uncoded(data.projects.map((p) => p.externalId)).length || uncoded(c.projects).length ? `<div class="section-title">Projects without a code</div>
+          ${data.projects.filter((p) => uncoded([p.externalId]).length).map((p) => `<label class="check" style="margin-bottom:6px"><input type="checkbox" data-proj="${esc(p.externalId)}" ${c.projects.includes(p.externalId) ? 'checked' : ''} ${dis}><span class="mono">${esc(p.code)}</span><span class="muted">${esc(p.name && p.name !== p.code ? p.name : '')}</span></label>`).join('')}
+          ${uncoded(c.projects).filter((p) => !data.projects.some((x) => x.externalId === p)).map((p) => `<label class="check"><input type="checkbox" data-proj="${esc(p)}" checked ${dis}><span class="mono">${esc(p)}</span><span class="muted">(outside your scope)</span></label>`).join('')}` : ''}
           <div class="section-title">Visibility policy</div>
           <label class="check"><input type="checkbox" id="cl-ticket" ${c.visibilityPolicy.showTicket ? 'checked' : ''} ${dis}> Show ticket numbers on shared alerts</label>
           <div class="section-title">Notification preferences</div>
@@ -89,13 +107,14 @@ export default {
           <div class="row" style="margin-top:8px"><a class="btn sm ghost" href="#/sharing?tab=shared&clientId=${encodeURIComponent(c.id)}">Shared alerts</a></div>`,
         actions: editable ? [{ label: 'Cancel', onClick: ({ close }) => close() }, { label: 'Save', kind: 'primary', onClick: async ({ close, el: box }) => {
           const projects = $$('[data-proj]:checked', box).map((x) => x.dataset.proj);
-          const removed = c.projects.filter((p) => !projects.includes(p));
+          const projectCodes = pickedCodes(box, 'data-pcode');
+          const removed = [...(c.projectCodes || []).filter((x) => !projectCodes.includes(x)), ...uncoded(c.projects).filter((p) => !projects.includes(p))];
           if (removed.length && !(await confirmDialog({ title: 'Remove project access?', danger: true, confirmLabel: 'Remove access',
             message: `<p>${esc(c.name)} will immediately lose access to alerts shared from: <b class="mono">${removed.map(esc).join(', ')}</b>.</p>` }))) return;
           try {
             await api.put(`/api/clients/${encodeURIComponent(c.id)}`, {
               name: $('#cl-name', box).value.trim(), contact: $('#cl-contact', box).value.trim(), status: $('#cl-status', box).value,
-              projects, visibilityPolicy: { ...c.visibilityPolicy, showTicket: $('#cl-ticket', box).checked },
+              projects, projectCodes, visibilityPolicy: { ...c.visibilityPolicy, showTicket: $('#cl-ticket', box).checked },
               notificationPrefs: { ...c.notificationPrefs, inApp: $('#cl-inapp', box).checked },
             });
             toast('Client saved', 'success'); close(); load();
@@ -124,10 +143,11 @@ export default {
       dialog({ title: `${icon('plus')} New client`,
         body: `<div class="field"><label>Client name</label><input class="input" id="nc-name" autofocus></div>
           <div class="field"><label>Contact</label><input class="input" id="nc-contact" placeholder="email or phone"></div>
-          <div class="section-title">Projects</div>${data.projects.map((p) => `<label class="check" style="margin-bottom:6px"><input type="checkbox" data-np="${esc(p.externalId)}"><span class="mono">${esc(p.code)}</span><span class="muted">${esc(p.name || '')}</span></label>`).join('')}
+          <div class="section-title">Project codes</div>${codePicker([], '', 'data-npcode')}
+          ${data.projects.filter((p) => uncoded([p.externalId]).length).length ? `<div class="section-title">Projects without a code</div>${data.projects.filter((p) => uncoded([p.externalId]).length).map((p) => `<label class="check" style="margin-bottom:6px"><input type="checkbox" data-np="${esc(p.externalId)}"><span class="mono">${esc(p.code)}</span><span class="muted">${esc(p.name || '')}</span></label>`).join('')}` : ''}
           <p class="muted">A new client sees nothing until alerts are explicitly shared with it.</p>`,
         actions: [{ label: 'Cancel', onClick: ({ close }) => close() }, { label: 'Create client', kind: 'primary', onClick: async ({ close, el: box }) => {
-          try { await api.post('/api/clients', { name: $('#nc-name', box).value.trim(), contact: $('#nc-contact', box).value.trim(), projects: $$('[data-np]:checked', box).map((x) => x.dataset.np) }); close(); toast('Client created', 'success'); load(); }
+          try { await api.post('/api/clients', { name: $('#nc-name', box).value.trim(), contact: $('#nc-contact', box).value.trim(), projects: $$('[data-np]:checked', box).map((x) => x.dataset.np), projectCodes: pickedCodes(box, 'data-npcode') }); close(); toast('Client created', 'success'); load(); }
           catch (err) { toast(err.message, 'error'); }
         } }] });
     });

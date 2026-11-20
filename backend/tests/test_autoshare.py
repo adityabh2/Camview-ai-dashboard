@@ -1,5 +1,7 @@
-"""Alerts the Camview API reports as VALID go to the client automatically;
-pending / invalid / exception never do; operator decisions always win."""
+"""Core rule: clients see ONLY alerts the operations team marked VALID.
+
+Camview's own VALID status, delivery on arrival and automatic sharing never make an alert client-visible —
+whatever the stored settings say (older versions allowed it). Operator decisions always win."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -23,24 +25,31 @@ def _alarm(aid, state, project=7, camera=101):
             "firstInstance": _recent(), "lastInstance": _recent(), "totalTimesReported": 1, "imageUrls": []}
 
 
-def test_camview_valid_is_delivered_once_and_only_valid(admin, client_a):
+def test_camview_valid_is_never_delivered_to_clients(admin, client_a):
     _on(admin)
     items = [_alarm("AUTO-V", 1), _alarm("AUTO-P", 0), _alarm("AUTO-I", 2), _alarm("AUTO-E", 3)]
-    assert tickets.auto_sync(items) == (1, 0)
-    assert tickets.auto_sync(items) == (0, 0)                       # idempotent on every refresh
-    assert db.one("SELECT COUNT(*) n FROM tickets WHERE alarm_id LIKE 'AUTO-%'")["n"] == 1
-    t = tickets.for_alarm("AUTO-V")
-    assert t["deliveryStatus"] == "delivered" and t["validatedBy"].startswith("Auto-share")
+    assert tickets.auto_sync(items) == (0, 0)
+    assert db.one("SELECT COUNT(*) n FROM tickets WHERE alarm_id LIKE 'AUTO-%'")["n"] == 0
     ids = {a["alarmId"] for a in client_a.get("/api/client/alerts")[1]["items"]}
-    assert "AUTO-V" in ids and not ids & {"AUTO-P", "AUTO-I", "AUTO-E"}
+    assert not ids & {"AUTO-V", "AUTO-P", "AUTO-I", "AUTO-E"}
 
 
-def test_camview_changes_to_invalid_withdraws(admin, client_a):
-    _on(admin)
-    tickets.auto_sync([_alarm("AUTO-X", 1)])
-    assert tickets.auto_sync([_alarm("AUTO-X", 2)]) == (0, 1)
-    assert tickets.for_alarm("AUTO-X")["status"] == "cancelled"
-    assert "AUTO-X" not in {a["alarmId"] for a in client_a.get("/api/client/alerts")[1]["items"]}
+def test_earlier_automatic_deliveries_are_withdrawn(client_a):
+    """An older version delivered Camview-VALID alerts on its own: at start-up those are withdrawn (quietly,
+    once, audited) and the client firewall hides them even before that."""
+    now = db.now_iso()
+    db.execute("INSERT INTO publications (alarm_id, client_id, status, project_id, shared_by, shared_at, evidence, "
+               "share_context, snapshot, updated_at) VALUES ('LEGACY-1','client-a','shared','7','Auto-share (automatic delivery)',"
+               "?, '[]', '[]', ?, ?)", (now, db.jdump({"alarmId": "LEGACY-1", "projectId": 7}), now))
+    db.execute("INSERT INTO tickets (ref, alarm_id, client_id, project_id, status, result, validated_by, delivery_status, "
+               "created_at, updated_at) VALUES ('TKT-LEG','LEGACY-1','client-a','7','open','valid',"
+               "'Auto-share (automatic delivery)','delivered',?,?)", (now, now))
+    assert "LEGACY-1" not in {a["alarmId"] for a in client_a.get("/api/client/alerts")[1]["items"]}
+    assert client_a.get("/api/client/alerts/LEGACY-1")[0] == 404
+    assert tickets.enforce_operator_valid_only() == (1, 1)
+    assert db.one("SELECT status FROM publications WHERE alarm_id='LEGACY-1'")["status"] == "withdrawn"
+    assert tickets.for_alarm("LEGACY-1")["status"] == "cancelled"
+    assert tickets.enforce_operator_valid_only() == (0, 0)                     # idempotent
 
 
 def test_operator_decision_wins_over_camview(admin, supervisor):
@@ -60,20 +69,28 @@ def test_off_or_old_alerts_are_not_pushed(admin):
     assert tickets.auto_sync([old]) == (0, 0)
 
 
-def test_runs_on_refresh(admin, client_a):
+def test_refresh_never_delivers_by_itself(admin, client_a):
     _on(admin)
     datasource.reset()
     datasource.refresh("7", force=True)
-    n = db.one("SELECT COUNT(*) n FROM tickets WHERE validated_by LIKE 'Auto-share%' AND delivery_status='delivered'")["n"]
-    assert n > 0
+    n = db.one("SELECT COUNT(*) n FROM tickets WHERE validated_by LIKE 'Auto-share%'")["n"]
+    assert n == 0
 
 
-def test_manual_review_off_blocks_decisions(admin, supervisor):
-    admin.put("/api/settings/policy", {"manualReview": False})
-    aid = supervisor.get("/api/queue?status=pending&size=1")[1]["items"][0]["alarmId"]
-    s, body = supervisor.post(f"/api/queue/{aid}/decide", {"result": "valid"})
-    assert s == 409 and body["error"] == "manual_review_off"
-    assert supervisor.get(f"/api/queue/{aid}")[1]["manualReview"] is False
+def test_manual_review_cannot_be_switched_off(admin, supervisor):
+    admin.put("/api/settings/policy", {"manualReview": False})          # an older setting: no longer honoured
+    a = supervisor.get("/api/queue?status=pending&size=1")[1]["items"][0]
+    assert supervisor.get(f"/api/queue/{a['alarmId']}")[1]["manualReview"] is True
+    s, body = supervisor.post(f"/api/queue/{a['alarmId']}/decide", {"result": "valid", "projectId": a["projectId"]})
+    assert s == 200, body
+
+
+def test_the_rule_itself_cannot_be_switched_off(admin):
+    s, body = admin.put("/api/settings/policy", {"clientsSeeOperatorValidOnly": False})
+    assert s == 400 and body["error"] == "policy_locked"
+    db.set_setting("policy", {"clientsSeeOperatorValidOnly": False})    # even written straight into the database
+    import workflow
+    assert workflow.policy()["clientsSeeOperatorValidOnly"] is True
 
 
 def test_nomenclature_is_built_from_camview_camera_data():
@@ -139,31 +156,20 @@ def test_summary_has_live_totals(supervisor):
     assert sm["projects"] and "unroutedValid" in sm
 
 
-def test_valid_without_client_still_gets_a_ticket(admin):
+def test_camview_valid_without_client_creates_nothing(admin):
     _on(admin)
-    a = _alarm("AUTO-NC", 1, project=99)                             # no exam/client mapped for project 99
-    assert tickets.auto_sync([a]) == (0, 0)
-    t = tickets.for_alarm("AUTO-NC")
-    assert t and t["status"] == "open" and t["deliveryStatus"] == "not_deliverable"
-    tickets.auto_sync([a])
-    assert db.one("SELECT COUNT(*) n FROM tickets WHERE alarm_id='AUTO-NC'")["n"] == 1
+    assert tickets.auto_sync([_alarm("AUTO-NC", 1, project=99)]) == (0, 0)
+    assert tickets.for_alarm("AUTO-NC") is None
 
 
-def test_delivery_on_arrival_needs_no_valid_mark(admin, client_a):
-    """The client sees a 12:00 alert at 12:00: every detection alert is delivered when it arrives; camera
-    status events never; Camview INVALID/EXCEPTION withdraws; operator INVALID wins."""
+def test_delivery_on_arrival_is_not_possible(admin, client_a):
+    """Arrival delivery (every detection alert to the client at once) contradicts the core rule: the setting is
+    ignored and nothing reaches a client before an operator marks it VALID."""
     _on(admin)
-    assert admin.put("/api/settings/policy", {"deliveryTrigger": "arrival"})[0] == 200
-    ev = {**_alarm("ARR-EV", 0), "eventKind": "camera_status", "alarmTypeName": "Camera Offline"}
-    items = [_alarm("ARR-P", 0), _alarm("ARR-V", 1), _alarm("ARR-I", 2), _alarm("ARR-E", 3), ev]
-    assert tickets.auto_sync(items) == (2, 0)
+    admin.put("/api/settings/policy", {"deliveryTrigger": "arrival"})
+    import workflow
+    assert workflow.policy()["deliveryTrigger"] == "valid"
+    items = [_alarm("ARR-P", 0), _alarm("ARR-V", 1)]
     assert tickets.auto_sync(items) == (0, 0)
     ids = {a["alarmId"] for a in client_a.get("/api/client/alerts")[1]["items"]}
-    assert {"ARR-P", "ARR-V"} <= ids and not ids & {"ARR-I", "ARR-E", "ARR-EV"}
-    t = tickets.for_alarm("ARR-P")
-    assert t["deliveryStatus"] == "delivered" and t["validatedBy"].startswith("Auto-share")
-    assert tickets.auto_sync([_alarm("ARR-P", 2)]) == (0, 1)                       # Camview: invalid → withdrawn
-    assert "ARR-P" not in {a["alarmId"] for a in client_a.get("/api/client/alerts")[1]["items"]}
-    assert tickets.auto_sync([_alarm("ARR-V", 0)]) == (0, 0)                       # back to pending is NOT a withdrawal
-    assert admin.put("/api/settings/policy", {"deliveryTrigger": "valid"})[0] == 200
-    assert tickets.auto_sync([_alarm("ARR-N", 0)]) == (0, 0)                       # valid mode: pending waits
+    assert not ids & {"ARR-P", "ARR-V"}

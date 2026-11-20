@@ -71,6 +71,18 @@ export default {
           ${kpi({ label: 'Missing camera', value: q.alarmsMissingCamera || 0, sub: 'alarms', icon: 'camera' })}
           ${kpi({ label: 'Missing evidence', value: q.alarmsMissingEvidence || 0, sub: 'alarms without images/video', icon: 'image' })}
         </div>
+        ${q.counters ? `<h3 style="margin:14px 0 8px">Records received from Camview</h3>
+        <div class="kpis nopad" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+          ${kpi({ label: 'Malformed records', value: q.counters.malformedRecords, sub: 'skipped, kept below — never silently dropped', icon: 'alert', accent: q.counters.malformedRecords ? 'critical' : undefined })}
+          ${kpi({ label: 'Unknown alarm types', value: q.counters.unknownAlarmTypes, sub: `${fmt.n(q.counters.unknownAlarmTypeRecords)} alerts`, icon: 'info', accent: q.counters.unknownAlarmTypes ? 'warning' : undefined })}
+          ${kpi({ label: 'Missing mappings', value: q.counters.missingMappings, sub: `exam ${fmt.n(q.counters.missingExamMapping)} · client ${fmt.n(q.counters.missingClientMapping)}`, icon: 'tree', accent: q.counters.missingMappings ? 'warning' : undefined })}
+          ${kpi({ label: 'Missing evidence', value: q.counters.missingEvidence, sub: 'detections without image or video', icon: 'image' })}
+          ${kpi({ label: 'Duplicate records', value: q.counters.duplicateRecords, sub: 'same alarm twice in one read', icon: 'compare' })}
+        </div>
+        ${q.counters.recentEvents?.length ? card({ title: `${icon('alert')} Quarantined records`, sub: 'Records that could not be used. The rest of every refresh was processed normally.', flush: true,
+          body: `<div class="table-wrap" style="max-height:300px"><table class="t"><thead><tr><th>Problem</th><th>Project</th><th>Alarm</th><th>Detail</th><th class="num">Seen</th><th>Last</th></tr></thead><tbody>
+            ${q.counters.recentEvents.map((e) => `<tr><td class="mono">${esc(e.kind)}</td><td>${esc(e.projectId || '—')}</td><td class="mono">${esc(e.alarmId || '—')}</td><td title="${esc(e.sample || '')}">${esc(e.detail || '')}</td><td class="num">${fmt.n(e.count)}</td><td>${fmt.rel(e.lastAt)}</td></tr>`).join('')}
+          </tbody></table></div>` }) : ''}` : ''}
 
         <div class="grid g-2">
           ${card({ title: `${icon('camera')} Unmapped cameras`, sub: 'Cameras sending alarms that are not in the nomenclature — their alarms show without Project/TC/Centre context', flush: true, actions: prov('derived'),

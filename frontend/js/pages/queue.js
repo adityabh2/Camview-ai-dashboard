@@ -3,7 +3,7 @@
 // new alerts are marked NEW in place and nothing you are looking at jumps away.
 
 import * as api from '../core/api.js';
-import { on } from '../core/state.js';
+import { on, pref, setPref } from '../core/state.js';
 import { setTitle } from '../core/layout.js';
 import { esc, icon, fmt, empty, errorBox, skeleton, toast, pager, delegate, morph, $, $$ } from '../core/ui.js';
 import { alertRow, rememberQueue } from '../components/queue.js';
@@ -11,7 +11,10 @@ import { alertRow, rememberQueue } from '../components/queue.js';
 const TABS = [['all', 'All'], ['pending', 'Pending'], ['valid', 'Valid'], ['invalid', 'Invalid'], ['exception', 'Exception']];
 // Two kinds of records come from Camview: alerts to decide (image + video) and camera online/offline events (no media).
 const KINDS = [['alert', 'Alerts', 'alert'], ['camera_status', 'Camera status events', 'camera']];
-const FILTERS = ['search', 'projectId', 'client', 'exam', 'priority', 'centre', 'camera', 'city', 'by', 'from', 'to', 'kind', 'type', 'range'];
+const FILTERS = ['search', 'code', 'projectId', 'client', 'exam', 'priority', 'centre', 'camera', 'city', 'by', 'from', 'to', 'kind', 'type', 'range', 'view'];
+// Operational views: the same records, filtered by what matters operationally (server-side, on the canonical alert).
+const VIEWS = [['needs_review', 'Needs review', 'pending'], ['unacknowledged', 'Not acknowledged', 'pending'], ['client_eligible', 'Client eligible', 'all'], ['client_shared', 'Client shared', 'all'],
+  ['camera_issues', 'Camera issues', 'all'], ['recording_issues', 'Recording issues', 'all']];
 const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const SIZE = 50;
 const RULES = {
@@ -28,6 +31,12 @@ export default {
     if (!KINDS.some(([k]) => k === q.kind)) q.kind = 'alert';
     // Today by default: earlier days only when a date is chosen (or "All dates")
     if (!q.from && !q.to && q.range !== 'all') { q.from = todayStr(); q.range = 'today'; }
+    // Project code (the exam's own id) narrows the queue to the projects behind it; it follows the dashboard's choice.
+    if (!('code' in ctx.query)) q.code = pref('dashCode', '') || '';
+    let codes = [];
+    const codeParts = (c) => String(c || '').split('/').map((s) => s.trim()).filter(Boolean);
+    const codeTabs = () => codes.length ? `<button type="button" class="dm-tab ${q.code ? '' : 'on'}" data-code="" aria-pressed="${!q.code}">All projects</button>
+      ${codes.map((c) => `<button type="button" class="dm-tab ${q.code === c.code ? 'on' : ''}" data-code="${esc(c.code)}" aria-pressed="${q.code === c.code}" title="${esc(c.code)}">${esc(codeParts(c.code)[0] || c.code)}<span class="muted">${esc(codeParts(c.code).slice(1, 3).join('/'))}</span></button>`).join('')}` : '';
     let data = null, ctrl = null;
     const seen = new Set();
     let firstLoad = true;
@@ -35,8 +44,10 @@ export default {
     el.innerHTML = `
       <div class="page-head"><div><h2>Alerts</h2><p id="q-rule">Sorted automatically: priority first, then most recent, then most repeated.</p></div>
         <div class="row"><span class="muted" id="q-fresh"></span><button class="btn sm" id="q-refresh">${icon('refresh', 's')} Refresh</button></div></div>
+      <nav class="dm-tabs q-codes" id="q-codes" aria-label="Project codes"></nav>
       <div class="tabs kind-tabs ${q.kind === 'camera_status' ? '' : 'hidden'}" role="tablist" id="q-kinds" aria-label="Kind of record">${KINDS.map(([k, l, ic]) => `<button class="tab ${k === q.kind ? 'on' : ''}" role="tab" aria-selected="${k === q.kind}" data-kind="${k}">${icon(ic, 's')} ${l}<span class="n" data-kn="${k}">·</span></button>`).join('')}</div>
       <div class="tabs" role="tablist" id="q-tabs">${TABS.map(([k, l]) => `<button class="tab ${k === q.status ? 'on' : ''}" role="tab" aria-selected="${k === q.status}" data-tab="${k}">${l}<span class="n" data-n="${k}">·</span></button>`).join('')}</div>
+      <div class="q-views ${q.kind === 'camera_status' ? 'hidden' : ''}" role="group" aria-label="Operational views" id="q-views">${VIEWS.map(([k, l]) => `<button type="button" class="chip ${k === q.view ? 'on' : ''}" aria-pressed="${k === q.view}" data-view="${k}">${l}<span class="n" data-vn="${k}">·</span></button>`).join('')}</div>
       <div class="filters">
         <input class="input" style="min-width:220px" id="f-search" data-page-search placeholder="Search alert, camera, room, exam…  ( / )" value="${esc(q.search)}">
         <select class="select" id="f-projectId" aria-label="Project"><option value="">All projects</option></select>
@@ -74,6 +85,11 @@ export default {
     };
 
     let loadedAt = null;
+    const loadCodes = async () => {
+      try { codes = (await api.get('/api/project-codes')).items || []; } catch { codes = []; }
+      if (q.code && !codes.some((c) => c.code === q.code)) { q.code = ''; setPref('dashCode', ''); }
+      $('#q-codes', el).innerHTML = codeTabs();
+    };
     const load = async ({ quiet = false } = {}) => {
       if (ctrl) ctrl.abort();
       ctrl = new AbortController();
@@ -105,6 +121,7 @@ export default {
       $('#f-priority', el).value = q.priority || '';
       $('#f-by', el).value = q.by || '';
       TABS.forEach(([k]) => { const n = $(`[data-n="${k}"]`, el); if (n) n.textContent = data.counts[k] ?? 0; });
+      VIEWS.forEach(([k]) => { const n = $(`[data-vn="${k}"]`, el); if (n) n.textContent = data.views?.[k] ?? 0; });
       KINDS.forEach(([k]) => { const n = $(`[data-kn="${k}"]`, el); if (n) n.textContent = data.kinds?.[k] ?? 0; });
       $('#q-rule', el).textContent = RULES[q.kind] || data.sortRule;
       const fr = Object.values(data.freshness || {});
@@ -142,11 +159,24 @@ export default {
       $$('[data-tab]', el).forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-selected', x === b); });
       set({ status: b.dataset.tab });
     }));
+    ctx.onCleanup(delegate(el, 'click', '.dm-tab[data-code]', (e, b) => {
+      setPref('dashCode', b.dataset.code);
+      $$('.dm-tab[data-code]', el).forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); });
+      set({ code: b.dataset.code, projectId: '' });
+    }));
     ctx.onCleanup(delegate(el, 'click', '[data-kind]', (e, b) => {
       $$('[data-kind]', el).forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-selected', x === b); });
       const status = b.dataset.kind === 'camera_status' ? 'all' : 'pending';       // status events are all "pending" in Camview
       $$('[data-tab]', el).forEach((x) => { x.classList.toggle('on', x.dataset.tab === status); x.setAttribute('aria-selected', x.dataset.tab === status); });
       set({ kind: b.dataset.kind, status });
+    }));
+    // a view is a toggle; it also picks the decision tab it makes sense with (shared / eligible alerts are VALID)
+    ctx.onCleanup(delegate(el, 'click', '[data-view]', (e, b) => {
+      const view = q.view === b.dataset.view ? '' : b.dataset.view;
+      const status = view ? VIEWS.find(([k]) => k === view)[2] : 'pending';
+      $$('[data-view]', el).forEach((x) => { x.classList.toggle('on', x.dataset.view === view); x.setAttribute('aria-pressed', x.dataset.view === view); });
+      $$('[data-tab]', el).forEach((x) => { x.classList.toggle('on', x.dataset.tab === status); x.setAttribute('aria-selected', x.dataset.tab === status); });
+      set({ view, status });
     }));
     ['projectId', 'client', 'exam', 'priority', 'centre', 'camera', 'type', 'by'].forEach((k) => $(`#f-${k}`, el).addEventListener('change', (e) => set({ [k]: e.target.value })));
     ['from', 'to'].forEach((k) => $(`#f-${k}`, el).addEventListener('change', (e) => set({ [k]: e.target.value, range: '' })));
@@ -156,10 +186,12 @@ export default {
     $('#f-search', el).addEventListener('input', (e) => { clearTimeout(t); t = setTimeout(() => set({ search: e.target.value.trim() }), 300); });
     $('#f-clear', el).addEventListener('click', () => {
       FILTERS.forEach((k) => { const i = $(`#f-${k}`, el); if (i) i.value = ''; });
-      set({ ...Object.fromEntries(FILTERS.map((k) => [k, ''])), kind: q.kind, from: todayStr(), range: 'today' });
+      $$('[data-view]', el).forEach((x) => { x.classList.remove('on'); x.setAttribute('aria-pressed', 'false'); });
+      set({ ...Object.fromEntries(FILTERS.map((k) => [k, ''])), code: q.code, kind: q.kind, from: todayStr(), range: 'today' });
     });
     $('#q-refresh', el).addEventListener('click', () => load());
     ctx.onCleanup(on('data', () => load({ quiet: true })));
+    await loadCodes();
     await load();
   },
 };

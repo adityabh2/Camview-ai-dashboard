@@ -203,7 +203,9 @@ def test_camview_frame_sync_status_is_the_camera_health_source(monkeypatch):
     assert (saved, events) == (1, [])
     h = health.get(7, 9101)
     assert h["source"] == "camview" and h["camera"]["state"] == "online" and "STREAM_AVAILABLE" in h["conditions"]
-    assert h["recording"]["state"] == "unknown" and h["recording"]["lastRecordingAt"] == "2026-09-26T09:59:00Z"
+    # lastFrameSync is the camera's last frame — never a recording time (Camview has no recording source)
+    assert h["recording"]["state"] == "unknown" and h["recording"]["lastRecordingAt"] is None
+    assert h["camera"]["lastFrameAt"] == "2026-09-26T09:59:00Z"
     assert health.source_mode() == "camview" and health.status()["mode"] == "camview"
     saved, events = health.sync_from_camview("7", [_cam_item("OFFLINE")])
     assert events == [{"projectId": "7", "cameraId": "9101", "event": "CAMERA_DISCONNECTED"}]
@@ -216,9 +218,14 @@ def test_camview_frame_sync_status_is_the_camera_health_source(monkeypatch):
                                           _cam_item("SYNCED", last="2026-09-26T11:00:00Z", alarm_id="new")])[0] == 1
     assert health.get(7, 9101)["camera"]["state"] == "online"
     assert health.sync_from_camview("7", [datasource._normalize([{"alarm": {"alarmId": "X", "cameraId": 5, "projectId": 7}}])[0]]) == (0, [])
-    # a configured push source is authoritative: Camview's status never overwrites it
+    # a push source that is REPORTING is authoritative: Camview's status never overwrites it. A token alone
+    # (no recent push data) is not a source: Camview's camera state still applies, flagged NOT REPORTING
     monkeypatch.setenv("CAMVIEW_HEALTH_INGEST_TOKEN", "t")
+    assert health.sync_from_camview("7", [_cam_item("OFFLINE")])[0] == 1
+    assert "HEALTH_SOURCE_NOT_REPORTING" in health.get(7, 9101)["conditions"]
+    health.ingest([{"projectId": 7, "cameraId": 9101, "cameraState": "online", "recordingState": "recording"}])
     assert health.sync_from_camview("7", [_cam_item("OFFLINE")]) == (0, [])
+    assert health.get(7, 9101)["recording"]["state"] == "recording"
 
 
 def test_camera_disconnect_notifies_alert_reviewers_once_a_day(supervisor):

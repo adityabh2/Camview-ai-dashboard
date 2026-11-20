@@ -13,3 +13,7 @@ backend/.env
 backend/backup-*/
 # local scratch
 .claude/settings.local.json
+# generated secrets (live mode without CAMVIEW_SECRET_KEY / CAMVIEW_ADMIN_PASSWORD)
+.session-secret
+initial-admin-password.txt
+backend/backups/

@@ -17,12 +17,23 @@ export const decisionBadge = (d, source) => {
   return `<span class="b dec ${c}"${src}>${icon(i)}${l}${source === 'camview' && d !== 'pending' ? ' · Camview' : ''}</span>`;
 };
 
+/** The ACKNOWLEDGE step: a pending alert is NOT ACKNOWLEDGED until an operator picks it up ("I have this");
+ *  who / when is kept once it is decided. Decided alerts and camera status events show no badge. */
+export const ackBadge = (a) => {
+  if (a.eventKind === 'camera_status' || a.decision !== 'pending') return '';
+  const by = a.review?.acknowledgedBy || a.alert?.acknowledgedBy;
+  const at = a.review?.acknowledgedAt || a.alert?.acknowledgedAt;
+  return at ? `<span class="b ack-ok" title="Acknowledged by ${esc(by || '')} · ${esc(fmt.dt(at))}">${icon('eye', 's')}ACK · ${esc(by || '')}</span>`
+    : '<span class="b ack-new" title="Nobody has picked this alert up yet — press A on the review screen">NOT ACKNOWLEDGED</span>';
+};
+
 export const DELIVERY = {
   ready: ['Ready to send', 'clock', 'vis-ready_for_review'],
   needs_client: ['Choose client', 'bang', 'vis-ready_for_review'],
+  queued: ['Sending… (retried automatically)', 'clock', 'vis-ready_for_review'],
   delivered: ['Delivered', 'share', 'vis-shared'],
   withdrawn: ['Withdrawn', 'x', 'vis-withdrawn'],
-  failed: ['DELIVERY FAILED — retry', 'alert', 'vis-withdrawn'],
+  failed: ['DELIVERY FAILED — send again', 'alert', 'vis-withdrawn'],
   not_deliverable: ['Not deliverable', 'lock', 'vis-internal'],
   none: ['Not delivered', 'lock', 'vis-internal'],
 };
@@ -105,7 +116,7 @@ export function alertRow(a, { isNew = false, selected = false } = {}) {
       <span class="t2"><span class="mono">${esc(where(a))}</span>${cameraName(a) ? ` · ${esc(cameraName(a))}` : ''}${a.totalTimesReported > 1 ? ` · <b>${a.totalTimesReported}×</b>` : ''}</span>
       <span class="t3">${centreLine(a)}${isEvent ? eventChip(a) : ''}${healthChips(a.health)}${isEvent ? '' : evidenceAvail(a.evidence)}</span></span></span>
     <span class="q-who">${who ? esc(who) : '<span class="nm-miss">CLIENT NOT MAPPED</span>'}</span>
-    <span class="q-st">${decisionBadge(a.decision, a.decisionSource)}${ticketChip(a.ticket)}${a.decisionSource === 'operator' && a.review?.by ? `<span class="q-by" title="Decided by the operations team">by ${esc(a.review.by)}</span>` : ''}</span>
+    <span class="q-st">${decisionBadge(a.decision, a.decisionSource)}${ackBadge(a)}${ticketChip(a.ticket)}${a.decisionSource === 'operator' && a.review?.by ? `<span class="q-by" title="Decided by the operations team">by ${esc(a.review.by)}</span>` : ''}</span>
     <span class="q-when num" title="${esc(fmt.dt(a.lastInstance))}">${fmt.time(a.lastInstance)}<br><span class="muted">${fmt.rel(a.lastInstance)}</span></span>
   </a>`;
 }

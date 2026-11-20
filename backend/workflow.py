@@ -40,10 +40,10 @@ POLICY_DEFAULTS = {
     "autoExams": True,               # client + exam created from the project code (MPESB/G2SG4-CRT-2026/…)
     "deliveryMode": "automatic",     # automatic = visible to the client on VALID; controlled = one-click Send
     "autoShareValid": True,          # alerts the Camview API reports as VALID are sent to the client automatically
-    # Optional stricter rule: clients see ONLY alerts an operator marked VALID in this dashboard. Camview's own
-    # status, arrival and automatic delivery never make an alert client-visible while it is on (client firewall).
-    # Off by default: every VALID alert (marked in Camview or here) goes to the client on its own.
-    "clientsSeeOperatorValidOnly": False,
+    # CORE RULE (not a setting): clients see ONLY alerts the operations team marked VALID in this dashboard.
+    # Camview's own status (lastActionType 1), arrival and automatic sharing never make an alert client-visible.
+    # Enforced in the client firewall (build_client_visible_alarm) whatever is stored; policy() pins it to True.
+    "clientsSeeOperatorValidOnly": True,
     "autoShareHours": None,          # optional age limit in hours; None = every valid alert in the live data
     "manualReview": True,            # VALID / INVALID / EXCEPTION buttons (False = Camview's status decides alone)
     "autoNomenclature": True,        # build Project › Centre › Location › Camera from Camview camera data
@@ -74,16 +74,31 @@ POLICY_DEFAULTS = {
 def policy():
     p = dict(POLICY_DEFAULTS)
     p.update(db.get_setting("policy", {}) or {})
-    if p.get("clientsSeeOperatorValidOnly", True):
-        # nothing reaches a client without an operator's VALID: no delivery on arrival, no Camview-VALID auto-share
-        p.update(deliveryTrigger="valid", autoShareValid=False, manualReview=True)
+    import config
+    if getattr(config, "DELIVER_ALL", False):
+        # CAMVIEW_CLIENT_DELIVERY=all: every detection alert reaches its client on arrival; nobody marks
+        # VALID / INVALID; an administrator revokes single alerts (Withdraw) and can send them again.
+        p.update(clientsSeeOperatorValidOnly=False, deliveryTrigger="all", autoShareValid=True, manualReview=False,
+                 deliveryMode="automatic", validSource="either", autoShareHours=None)
+        return p
+    # nothing reaches a client without an operator's VALID: no delivery on arrival, no Camview-VALID auto-share.
+    # A stored value from an older version (the rule used to be optional) cannot switch it off.
+    # Manual sharing follows the same rule: only an operator's VALID counts as valid for sharing.
+    p.update(clientsSeeOperatorValidOnly=True, deliveryTrigger="valid", autoShareValid=False, manualReview=True,
+             validSource="ops")
     return p
+
+
+LOCKED_POLICY = {"clientsSeeOperatorValidOnly": True}
 
 
 def set_policy(updates, user):
     old = policy()
     new = dict(old)
     for k, v in (updates or {}).items():
+        if k in LOCKED_POLICY and v != LOCKED_POLICY[k]:
+            raise ApiError("policy_locked", "Clients see only alerts the operations team marked VALID. "
+                                            "This is a core rule and cannot be switched off.", 400)
         if k in POLICY_DEFAULTS:
             new[k] = v
     db.set_setting("policy", {k: new[k] for k in POLICY_DEFAULTS})
@@ -420,7 +435,7 @@ def _live_for(pub_rows):
     return out
 
 
-def build_client_visible_alarm(user, pub_row, live=None):
+def build_client_visible_alarm(user, pub_row, live=None, pre=None):
     """Returns the client-safe view of ONE publication, or None.
     1 authorization  2 client/project scope  3 publication state
     4 strip internal fields  5 drop unshared evidence  6 no internal notes.
@@ -433,14 +448,20 @@ def build_client_visible_alarm(user, pub_row, live=None):
         return None
     if str(pub_row.get("project_id")) not in user["clientProjects"]:
         return None                                   # project assignment removed -> access follows policy
-    if policy().get("clientsSeeOperatorValidOnly", True) and not operator_valid([pub_row["alarm_id"]]):
-        return None                                   # only alerts the backend team marked VALID reach a client
+    if (pre["validOnly"] if pre and "validOnly" in pre else policy().get("clientsSeeOperatorValidOnly", True)):
+        valid = pre["valid"] if pre else operator_valid([pub_row["alarm_id"]])
+        if pub_row["alarm_id"] not in valid:
+            return None                               # CORE RULE: only alerts the operations team marked VALID
     if pub_row["status"] != "shared":
         return None
     snap = db.jload(pub_row.get("snapshot"), {}) or {}
     exams_allowed = (user.get("scopes") or {}).get("exam")
     if exams_allowed and ((snap.get("exam") or {}).get("id") not in exams_allowed):
         return None                                   # this login is limited to some of the client's exams
+    import exams as exams_mod
+    exam_now = exams_mod.resolve(pub_row.get("project_id"), snap.get("firstInstance"))
+    if exam_now and exam_now.get("clientId") and exam_now["clientId"] != pub_row["client_id"]:
+        return None                                   # the exam now belongs to another client: never the wrong client
     out = {k: snap.get(k) for k in CLIENT_FIELDS}
     if live is None:
         live = _live_for([pub_row])
@@ -475,16 +496,18 @@ def build_client_visible_alarm(user, pub_row, live=None):
         out["evidence"] = []
     out["imageUrl"] = next((e["url"] for e in out["evidence"] if e["kind"] == "image"), None)   # frame for lists
     out["hasVideo"] = any(e["kind"] == "video" for e in out["evidence"])
-    policy_ = db.jload((db.one("SELECT visibility_policy FROM clients WHERE id=?", (user["clientId"],)) or {})
-                       .get("visibility_policy"), {}) or {}
+    policy_ = pre["policy"] if pre else _client_policy(user["clientId"])
     if policy_.get("showTicket") and snap.get("ticketId"):
         out["ticketId"] = snap.get("ticketId")
     out["status"] = "Delivered"
     exam = snap.get("exam") or None
     out["exam"] = {"id": exam.get("id"), "name": exam.get("name")} if exam else None
-    t = db.one("SELECT ref FROM tickets WHERE alarm_id=? AND client_id=? AND status='open'",
-               (snap.get("alarmId"), pub_row["client_id"]))
-    out["ticketRef"] = t["ref"] if t else None
+    if pre:
+        out["ticketRef"] = pre["refs"].get(snap.get("alarmId"))
+    else:
+        t = db.one("SELECT ref FROM tickets WHERE alarm_id=? AND client_id=? AND status='open'",
+                   (snap.get("alarmId"), pub_row["client_id"]))
+        out["ticketRef"] = t["ref"] if t else None
     # an automatic delivery's summary is rebuilt from the current record (current type name); a summary a
     # person wrote when publishing by hand is kept as written — never with a stored verdict
     if now and str(pub_row.get("shared_by") or "").startswith("Auto-share"):
@@ -505,6 +528,11 @@ def operator_valid(alarm_ids):
     return {i for i, r in db.reviews_for(alarm_ids).items() if r["status"] == "marked_valid"}
 
 
+def _client_policy(client_id):
+    return db.jload((db.one("SELECT visibility_policy FROM clients WHERE id=?", (client_id,)) or {})
+                    .get("visibility_policy"), {}) or {}
+
+
 def client_visible_alarms(user):
     """The CLIENT DATASET: every alarm this client user may see, already
     filtered and transformed. Client analytics/reports use only this."""
@@ -514,8 +542,19 @@ def client_visible_alarms(user):
     rows = db.rows("SELECT * FROM publications WHERE client_id=? AND status='shared' ORDER BY shared_at DESC",
                    (user["clientId"],))
     live = _live_for(rows)
+    # every check still runs per alert; only the lookups are batched (3 queries per list, not 3 per alert)
+    ids = [r["alarm_id"] for r in rows]
+    refs = {}
+    for i in range(0, len(ids), 900):
+        chunk = ids[i:i + 900]
+        for t in db.rows("SELECT alarm_id, ref FROM tickets WHERE status='open' AND client_id=? AND alarm_id IN "
+                         f"({','.join('?' for _ in chunk)})", [user["clientId"], *chunk]):
+            refs[t["alarm_id"]] = t["ref"]
+    valid_only = policy().get("clientsSeeOperatorValidOnly", True)          # read once per list, not per alert
+    pre = {"valid": operator_valid(ids) if valid_only else set(), "validOnly": valid_only,
+           "policy": _client_policy(user["clientId"]), "refs": refs}
     for r in rows:
-        v = build_client_visible_alarm(user, r, live)
+        v = build_client_visible_alarm(user, r, live, pre)
         if v:
             out.append(v)
     return out

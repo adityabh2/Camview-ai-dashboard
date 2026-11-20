@@ -15,6 +15,7 @@ const BANNERS = {
   none: (s) => `<div class="banner warning">${icon('bang')}<div class="grow"><b>NO CAMERA STATUS YET</b> — ${esc(s.note)}</div></div>`,
   camview: (s) => `<div class="banner info hb-note">${icon('info')}<div class="grow"><b>Camera connection as Camview reports it</b> <span class="muted">— ${esc(s.note)}</span></div></div>`,
   push: () => '',
+  push_not_reporting: (s) => `<div class="banner warning">${icon('bang')}<div class="grow"><b>HEALTH SOURCE NOT REPORTING</b> — ${esc(s.note)}${s.lastPushAt ? ` Last report ${fmt.rel(s.lastPushAt)}.` : ''}</div></div>`,
 };
 const SIZE = 50;
 
@@ -63,16 +64,19 @@ export default {
         <td><div class="cell-2"><span class="mono" style="font-weight:600">${esc(r.cameraNumber || r.code)}</span><span class="l2">${esc([r.subLocation, `Camview id ${r.cameraId}`].filter(Boolean).join(' · '))}</span></div></td>
         ${group ? '' : `<td><div class="cell-2"><span>${esc(r.centreName || r.centre || '—')}</span><span class="l2">${esc([r.centre, r.city].filter(Boolean).join(' · '))}</span></div></td>`}
         <td>${healthChips(r.health)}</td>
-        <td>${r.health.recording.lastRecordingAt ? `<div class="cell-2"><span class="num">${fmt.dt(r.health.recording.lastRecordingAt)}</span><span class="l2">${fmt.rel(r.health.recording.lastRecordingAt)}</span></div>` : '<span class="muted">never</span>'}</td>
+        <td>${(() => {                 // Camview: the camera's last frame; a recording source: the last recording
+          const t = data.status.mode === 'push' ? r.health.recording.lastRecordingAt : r.health.camera.lastFrameAt;
+          return t ? `<div class="cell-2"><span class="num">${fmt.dt(t)}</span><span class="l2">${fmt.rel(t)}</span></div>` : '<span class="muted">—</span>';
+        })()}</td>
         <td>${r.lastAlertAt ? `<span class="muted">${fmt.rel(r.lastAlertAt)}</span>` : '—'}</td>
         <td>${r.health.lastEvent ? `<span class="mono">${esc(r.health.lastEvent.type)}</span> <span class="muted">${fmt.rel(r.health.lastEvent.at)}</span>` : '—'}</td></tr>`;
 
-    const head = (withCentre) => `<thead><tr><th>Camera</th>${withCentre ? '<th>Centre</th>' : ''}<th>Connection</th><th>${data.status.mode === 'camview' ? 'Last frame' : 'Last recording'}</th><th>Last alert</th><th>Last change</th></tr></thead>`;
+    const head = (withCentre) => `<thead><tr><th>Camera</th>${withCentre ? '<th>Centre</th>' : ''}<th>Connection</th><th>${data.status.mode === 'push' ? 'Last recording' : 'Last frame'}</th><th>Last alert</th><th>Last change</th></tr></thead>`;
 
     const paint = () => {
       const s = data.status, k = data.counts;
       morph($('#hb-banner', el), (BANNERS[s.mode] || BANNERS.none)(s));
-      const fromCamview = s.mode === 'camview';
+      const fromCamview = s.mode === 'camview' || s.mode === 'push_not_reporting';
       morph($('#hb-kpis', el), [
         kpi({ label: 'Cameras reporting', value: data.items.length, icon: 'camera', sub: `in your projects · last report ${s.lastReportAt ? fmt.rel(s.lastReportAt) : '—'}` }),
         kpi({ label: 'Offline', value: k.offline, accent: k.offline ? 'critical' : '', icon: 'x', href: '#/monitoring?tab=health&hf=offline', sub: 'no frames now' }),

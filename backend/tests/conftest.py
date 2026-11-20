@@ -26,10 +26,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import workflow  # noqa: E402
 # Most tests describe the manual / controlled flow; auto-share has its own tests (test_autoshare.py).
-workflow.POLICY_DEFAULTS.update(deliveryMode="controlled", autoShareValid=False, manualReview=True, autoShareHours=24,
-                                # the older suites describe every delivery mode; test_client_visibility.py covers
-                                # the production default (clients see only operator-VALID alerts)
-                                clientsSeeOperatorValidOnly=False)
+workflow.POLICY_DEFAULTS.update(deliveryMode="controlled", autoShareValid=False, manualReview=True, autoShareHours=24)
+# clientsSeeOperatorValidOnly is a core rule (always on): no test can switch it off
 
 import app as app_module  # noqa: E402  (seeds the demo template on import)
 import config  # noqa: E402
@@ -54,8 +52,14 @@ def isolated_db():
     db.DB_PATH = _fresh_copy(TEMPLATE)
     nomenclature._cache.update(nodes=None, checked=0, db=None)
     datasource.reset()
+    import camview_client
+    import media
+    import obs
     import routes_common
     import routes_ops
+    camview_client.breaker.reset()           # circuit breaker, counters and link re-reads are per-process state
+    obs.reset()
+    media._refreshed.clear()
     routes_common._failures.clear()          # sign-in rate limiter is per-process state
     routes_ops._tick_state["at"] = 0.0       # schedules / escalations run on the first /api/status of every test
     yield

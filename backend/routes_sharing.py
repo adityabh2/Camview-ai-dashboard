@@ -8,6 +8,7 @@ explicit confirmation for publish/withdraw, and is audited.
 
 from flask import Blueprint, jsonify, request
 
+import alert_service
 import datasource
 import db
 import rbac
@@ -157,10 +158,9 @@ def preview():
                   "ticketId": a.get("ticketId")},
         "context": [{"level": n["level"], "code": n["code"], "name": n.get("name"), "shared": n["level"] in levels}
                     for n in ctx.get("path", [])],
-        "evidence": ([{"key": f"image:{i}", "kind": "image", "url": u, "shared": f"image:{i}" in sel}
-                      for i, u in enumerate(a.get("imageUrls") or [])]
-                     + ([{"key": "video:0", "kind": "video", "url": a["videoUrl"], "shared": "video:0" in sel}]
-                        if a.get("videoUrl") else [])),
+        "evidence": [{"key": f"{e['kind']}:{e['index']}", "kind": e["kind"], "url": e["url"],
+                      "shared": f"{e['kind']}:{e['index']}" in sel}
+                     for e in sorted(alert_service.evidence_items(a), key=lambda e: e["kind"] != "image")],
         "summary": (pub or {}).get("clientSummary") or workflow.client_safe_summary(a, levels),
         "summarySource": "existing" if (pub or {}).get("clientSummary") else "template",
         "internalNotShared": workflow.internal_not_shared(a, levels, sel),

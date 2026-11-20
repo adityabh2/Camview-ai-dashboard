@@ -106,13 +106,14 @@ def test_ticket_delivery_failure_is_reported_and_retry_works(admin, supervisor, 
     real = tickets.deliver
     monkeypatch.setattr(tickets, "deliver", lambda *a_, **k: (_ for _ in ()).throw(RuntimeError("db down")))
     s, body = supervisor.post(f"/api/queue/{a['alarmId']}/decide", {"result": "valid"})
-    assert s == 502 and body["error"] == "delivery_failed" and "retry" in body["message"]   # explicit, never "delivered"
+    # the decision is saved (durably, with its delivery intent); delivery is explicitly NOT reported as done
+    assert s == 200 and body["delivery"]["status"] == "queued" and body["delivery"]["retrying"], body
     t = tickets.for_alarm(a["alarmId"])
-    assert t is None or t["deliveryStatus"] != "delivered"
+    assert t["deliveryStatus"] == "queued"
     assert client_a.get(f"/api/client/alerts/{a['alarmId']}")[0] == 404
     monkeypatch.setattr(tickets, "deliver", real)
-    s, r = supervisor.post(f"/api/queue/{a['alarmId']}/decide", {"result": "valid"})       # retry
-    assert s == 200 and r["delivery"]["status"] == "delivered"
+    s, r = supervisor.post(f"/api/queue/{a['alarmId']}/decide", {"result": "valid"})       # retry: runs the queued job
+    assert s == 200 and r["idempotent"] and r["delivery"]["status"] == "delivered", r
     assert client_a.get(f"/api/client/alerts/{a['alarmId']}")[0] == 200
 
 
