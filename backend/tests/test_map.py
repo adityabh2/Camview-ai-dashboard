@@ -102,7 +102,7 @@ def _alarm(pid, code, city, state, **kw):
 
 
 def test_city_positions_are_approximate_and_admin_wins():
-    items = [_alarm(34, "A1", "INDORE", "Madhya Pradesh", priority="high"),
+    items = [_alarm(34, "A1", "INDORE", "Madhya Pradesh", live=True),     # a LIVE alert waiting → ALARM
              _alarm(34, "A2", "Indore", "Madhya Pradesh", decision="valid", cam="2",
                     health={"available": True, "camera": {"state": "offline"}, "conditions": ["CAMERA_OFFLINE"]}),
              _alarm(34, "A3", "INDORE", "Madhya Pradesh", decision="invalid", cam="3",
