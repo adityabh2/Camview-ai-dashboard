@@ -73,6 +73,7 @@ def run():
     ensure_admin(force=not db.rows("SELECT 1 FROM users LIMIT 1"))
     import project_codes
     project_codes.seed_from_config()           # CAMVIEW_PROJECT_CODES joins the project-code registry
+    project_codes.ensure_monitored()           # every registered code's projects are monitored (no empty tabs)
     datasource.prune_stale_projects()          # an old exam's auto-built tree never lingers next to the running one
     import tickets
     # core rule: clients see only operator-VALID alerts. Anything an older version delivered on Camview's VALID

@@ -639,6 +639,7 @@ def settings_projects_lookup():
 def _code_entry(e):
     return {"code": e["code"], "source": e.get("source"), "addedAt": e.get("addedAt"), "resolvedAt": e.get("resolvedAt"),
             "error": e.get("error"), "archived": bool(e.get("archived")), "archivedAt": e.get("archivedAt"),
+            "excluded": [p for p in e.get("projectIds", []) if p in config.EXCLUDED_PROJECTS],
             "archivedBy": e.get("archivedBy"), "projects": [{**project_label(p), "name": (e.get("names") or {}).get(p) or project_label(p).get("name")}
                                                   for p in e.get("projectIds", [])]}
 

@@ -409,6 +409,8 @@ def start_warmer():
         while True:
             try:
                 auto_discover()                          # running projects are monitored without anyone typing an id
+                import project_codes
+                project_codes.ensure_monitored()         # every registered project code's projects stay monitored
                 prune_stale_projects()
                 sync_project_codes()
                 for pid in all_project_ids():

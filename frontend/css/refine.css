@@ -297,3 +297,24 @@ a.kpi:hover{background:var(--panel);border-color:var(--accent-line);}
 .l-cam{background:radial-gradient(120% 90% at 30% 20%,#2b3852 0%,#161d2b 70%);border-color:#2a3446;}
 .l-cam::after{background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(255,255,255,.035) 3px 4px);}
 .l-cam em{color:rgba(255,255,255,.55);}
+
+/* HMS v2: numbers row, share bar, project x type table */
+.hms-head{margin-bottom:12px;}
+.hms-kpis{margin-top:14px;}
+.hms-sub{font-size:14px;font-weight:650;margin:20px 0 10px;}
+.hms-when{font-size:12px;}
+.hms-nums{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px;}
+.hms-nums div{display:flex;flex-direction:column;}
+.hms-nums b{font:600 22px/1.1 var(--mono);letter-spacing:-.02em;}
+.hms-nums div:first-child b{font-size:30px;}
+.hms-nums span{font-size:11.5px;color:var(--text-3);}
+.hms-bar{height:4px;border-radius:2px;background:var(--panel-3);overflow:hidden;margin-top:6px;}
+.hms-bar span{display:block;height:100%;background:var(--accent);border-radius:2px;}
+.hms-tile.is-live .hms-bar span{background:var(--v-valid);}
+.hms-grid.is-loading{opacity:.45;transition:opacity .15s;}
+.hms-matrix{margin-bottom:4px;}
+.hms-t th.num,.hms-t td.num{text-align:right;}
+.hms-t th{white-space:nowrap;}
+.hms-t tr.link{cursor:pointer;}
+.hms-t tr.link:hover td{background:var(--hover);}
+.hms-cell{background:color-mix(in srgb,var(--accent) calc(var(--a) * 100%),transparent);font-family:var(--mono);}

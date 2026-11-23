@@ -253,6 +253,31 @@ def seed_from_config():
     return added
 
 
+def ensure_monitored():
+    """Every registered, not archived code's projects are monitored (a code from CAMVIEW_PROJECT_CODES, or one whose
+    projects were dropped from monitoring, would otherwise show a tab with no alerts). Runs at start-up.
+    Returns the project ids that were added."""
+    import datasource
+    monitored = set(datasource.all_project_ids())
+    added = []
+    for e in entries():
+        if e.get("archived"):
+            continue
+        missing = [str(p) for p in e.get("projectIds", []) if str(p) not in monitored and str(p) not in config.EXCLUDED_PROJECTS]
+        if missing:
+            _monitor(missing, e["code"], e.get("names") or {})
+            added += missing
+    if added:
+        datasource.reset()
+        log.info("Project codes: now monitoring %s (registered but not monitored before)", ", ".join(added))
+    return added
+
+
+def excluded_ids(code):
+    """Projects of a code that the server excludes (CAMVIEW_EXCLUDED_PROJECTS) — shown, never silently empty."""
+    return [p for p in project_ids(code) if p in config.EXCLUDED_PROJECTS]
+
+
 # ---- archive (codes): monitoring stops, everything is kept; only an administrator deletes ----------------------
 
 def archive_code(code, user=None):

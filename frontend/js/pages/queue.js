@@ -50,6 +50,7 @@ export default {
       <div class="q-views ${q.kind === 'camera_status' ? 'hidden' : ''}" role="group" aria-label="Operational views" id="q-views">${VIEWS.map(([k, l]) => `<button type="button" class="chip ${k === q.view ? 'on' : ''}" aria-pressed="${k === q.view}" data-view="${k}">${l}<span class="n" data-vn="${k}">·</span></button>`).join('')}</div>
       <div class="q-types" role="group" aria-label="Alert type" id="q-types"></div>
       <div class="q-archbar" id="q-archbar"></div>
+      <div id="q-codenote"></div>
       <div class="filters">
         <input class="input" style="min-width:220px" id="f-search" data-page-search placeholder="Search alert, camera, room, exam…  ( / )" value="${esc(q.search)}">
         <select class="select" id="f-projectId" aria-label="Project"><option value="">All projects</option></select>
@@ -114,6 +115,14 @@ export default {
 
     const paint = () => {
       const f = data.facets;
+      // a project that is not part of the selected code would empty the list: drop it
+      const stale = [['projectId', f.projects], ['exam', f.exams], ['client', f.clients]]
+        .filter(([k, list]) => q[k] && !(list || []).some(([v]) => String(v) === String(q[k])));
+      if (stale.length) {                       // a choice from another project would empty the list (or show blank)
+        const patch = Object.fromEntries(stale.map(([k]) => [k, '']));
+        Object.assign(q, patch); ctx.setQuery(patch); load(); return;
+      }
+      $('#q-codenote', el).innerHTML = data.codeNote ? `<div class="banner warning" style="margin-bottom:12px">${icon('info')}<div>${esc(data.codeNote)}</div></div>` : '';
       opts('#f-projectId', f.projects || [], q.projectId);
       opts('#f-client', f.clients, q.client);
       opts('#f-exam', f.exams, q.exam);

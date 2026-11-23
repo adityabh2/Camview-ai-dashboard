@@ -32,6 +32,32 @@ def _local_day(iso, offset):
     return (t + timedelta(minutes=offset)).date()
 
 
+def _by_code(items, offset, today):
+    """One row per registered project code (and "Other projects" for monitored ones without a code): alerts per
+    classification, plus live / today / total — the project x alert-type table of the HMS board."""
+    import project_codes
+    owner = {}
+    for e in project_codes.entries():
+        if e.get("archived"):
+            continue
+        for p in e.get("projectIds", []):
+            owner.setdefault(str(p), e["code"])
+    rows = {}
+    for a in items:
+        if a.get("eventKind") == "camera_status":
+            continue
+        code = owner.get(str(a.get("projectId")), "")
+        r = rows.setdefault(code, {"code": code or None, "label": code or "Other projects", "types": {},
+                                   "live": 0, "today": 0, "total": 0, "pending": 0})
+        tid = str(a.get("alarmType"))
+        r["types"][tid] = r["types"].get(tid, 0) + 1
+        r["total"] += 1
+        r["live"] += bool(a.get("live"))
+        r["today"] += _local_day(a.get("lastInstance") or a.get("firstInstance"), offset) == today
+        r["pending"] += a.get("decision") == "pending"
+    return sorted(rows.values(), key=lambda r: (-r["live"], -r["today"], -r["total"]))
+
+
 @bp.route("/api/hms")
 @rbac.internal("live.view", "alarm.view", any_of=True)
 def hms():
@@ -72,6 +98,7 @@ def hms():
               "offline": sum(1 for s in cams.values() if s in ("OFFLINE", "DISCONNECTED")),
               "syncFailed": sum(1 for s in cams.values() if s in ("FAILED", "SYNC_FAILED", "NOT_SYNCED"))}
     fr = list(freshness.values())
-    return jsonify({"types": rows, "totals": totals, "cameras": camera, "liveMinutes": config.LIVE_MINUTES,
+    by_code = None if request.args.get("code") or request.args.get("projectId") else _by_code(items, offset, today)
+    return jsonify({"types": rows, "totals": totals, "cameras": camera, "liveMinutes": config.LIVE_MINUTES, "byCode": by_code,
                     "updatedAt": max((f.get("lastSuccessAt") or "" for f in fr), default="") or None,
                     "feedsFailing": sum(1 for f in fr if f.get("lastError")), "projects": len(fr)})

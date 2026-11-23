@@ -63,6 +63,8 @@ def _all_alarms(user, project=None, code=None, archived=False):
         if not ids:
             raise ApiError("not_found", "This project code is not registered. Add it on the dashboard first.", 404)
         pids = [p for p in ids if p in allowed]
+        if project:                                    # one project of the code (the project dropdown)
+            pids = [p for p in pids if p == str(project)]
     else:
         pids = [str(project)] if project else datasource.allowed_projects(user)
     items, freshness = [], {}
@@ -157,6 +159,31 @@ def _in_view(a, view):
     raise ApiError("bad_request", f"view must be one of {', '.join(VIEWS)}.", 400)
 
 
+def _dropdown_projects(user, code=None):
+    allowed = datasource.allowed_projects(user)
+    if not code:
+        return allowed
+    import project_codes
+    ids = set(project_codes.project_ids(code))
+    return [p for p in allowed if p in ids]
+
+
+def _code_note(user, code):
+    """Why a selected project code shows nothing: its projects are not monitored, or the server excludes them."""
+    if not code:
+        return None
+    import project_codes
+    ids = project_codes.project_ids(code)
+    allowed = set(datasource.allowed_projects(user))
+    if any(p in allowed for p in ids):
+        return None
+    excluded = project_codes.excluded_ids(code)
+    if excluded:
+        return (f"The server excludes project {', '.join(excluded)} (CAMVIEW_EXCLUDED_PROJECTS), so this code shows no "
+                "alerts. Remove it from that setting to see them.")
+    return "This code's projects are not being monitored yet. They are added automatically within a minute."
+
+
 def _type_counts(items):
     """[{type, short, name, count, live}] most frequent first — alerts per classification (CamviewAI feature list)."""
     out = {}
@@ -233,9 +260,11 @@ def queue():
                         key=lambda x: x[1]),
         # alerts per classification under the current filters (all but the type itself) — the type chips' counts
         "typeCounts": _type_counts(_filter(items, {**f, "type": None})),
+        # the project dropdown lists the selected code's projects only (never one that would empty the list)
         "projects": [[p["externalId"], p["code"] + (f" · {p['name']}" if p.get("name") and p["name"] != p["code"] else "")]
-                     for p in (project_label(x) for x in (datasource.allowed_projects(user)))],
+                     for p in (project_label(x) for x in _dropdown_projects(user, request.args.get("code")))],
     }
+    page["codeNote"] = _code_note(user, request.args.get("code"))
     page["manualReview"] = bool(workflow.policy().get("manualReview"))
     page["freshness"] = freshness
     return jsonify(page)
