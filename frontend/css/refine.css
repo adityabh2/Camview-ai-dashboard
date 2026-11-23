@@ -223,3 +223,77 @@ a.kpi:hover{background:var(--panel);border-color:var(--accent-line);}
 .b.live-b{background:var(--st-good-bg);color:var(--v-valid);border-color:color-mix(in srgb,var(--v-valid) 40%,transparent);margin-left:4px;}
 .b.live-b::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;}
 .q-p{display:flex;flex-wrap:wrap;gap:4px;align-items:center;}
+
+/* alert-type chips on the Alerts page: one click filters by classification */
+.q-types{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px;}
+.q-types:empty{display:none;}
+.tchip{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 10px;border-radius:999px;cursor:pointer;
+  border:1px solid var(--border);background:var(--panel);color:var(--text-2);font-size:12.5px;}
+.tchip b{font-family:var(--mono);font-weight:600;color:var(--accent-2);}
+.tchip .n{font-family:var(--mono);font-size:11px;color:var(--text-3);}
+.tchip:hover{border-color:var(--border-strong);color:var(--text);}
+.tchip.on{background:var(--accent-soft);border-color:var(--accent-line);color:var(--text);}
+.tchip-live{font-size:10.5px;font-weight:600;color:var(--v-valid);background:var(--st-good-bg);border-radius:999px;padding:1px 6px;}
+@media (max-width:700px){ .tchip span:not(.n):not(.tchip-live){display:none;} }
+.qrows.is-loading{opacity:.45;pointer-events:none;transition:opacity .15s;}
+
+/* map: project tabs and the per-project colour legend */
+.mp-codes{margin:0;gap:5px;}
+.mp-codes .dm-tab{font-size:12px;padding:5px 10px;}
+.mp-proj-legend{margin-bottom:6px;}
+.mp-proj-legend .mp-dot{border:2px solid var(--panel);box-shadow:0 0 0 1px var(--border-strong);}
+
+/* ============================== HMS BOARD ============================== */
+.hms-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;}
+.hms-tile{display:flex;flex-direction:column;gap:6px;padding:16px;border-radius:var(--r-m);border:1px solid var(--border);
+  background:var(--panel);color:var(--text);text-decoration:none;transition:border-color var(--t-fast),transform var(--t-fast);}
+.hms-tile:hover{border-color:var(--accent-line);text-decoration:none;transform:translateY(-1px);}
+.hms-tile.is-live{border-color:color-mix(in srgb,var(--v-valid) 55%,var(--border));box-shadow:inset 3px 0 0 var(--v-valid);}
+.hms-tile.is-unknown{box-shadow:inset 3px 0 0 var(--st-warning);}
+.hms-top{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.hms-code{font:600 13px var(--mono);color:var(--accent-2);background:var(--accent-soft);border:1px solid var(--accent-line);
+  border-radius:6px;padding:2px 8px;}
+.hms-live{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--v-valid);}
+.hms-live i{width:8px;height:8px;border-radius:50%;background:var(--v-valid);animation:hmsPulse 1.6s ease-in-out infinite;}
+@keyframes hmsPulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--v-valid) 55%,transparent);}50%{box-shadow:0 0 0 6px transparent;}}
+.hms-name{font-weight:600;font-size:14px;}
+.hms-big{font:600 34px/1.05 var(--mono);letter-spacing:-.02em;margin-top:4px;}
+.hms-big span{font:500 12px var(--font);color:var(--text-3);margin-left:6px;letter-spacing:0;}
+.hms-foot{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--text-2);margin-top:auto;padding-top:8px;border-top:1px solid var(--border);}
+.q-archbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px;font-size:12.5px;}
+.q-archbar:empty{display:none;}
+
+/* ============================== SIGN-IN ==============================
+   One orchestrated moment: a live camera wall. A scan line sweeps the grid and detections light up on a few
+   cameras in turn, the way alerts are caught. The card fades in once. Reduced motion: still (global rule). */
+.login .l-brand{position:relative;overflow:hidden;gap:28px;}
+.l-scene{position:relative;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;max-width:520px;margin:8px 0 4px;}
+.l-cam{position:relative;aspect-ratio:16/10;border-radius:8px;overflow:hidden;
+  background:linear-gradient(160deg,color-mix(in srgb,var(--panel-3) 90%,var(--accent) 10%),var(--panel-2));
+  border:1px solid var(--border);opacity:0;animation:lCamIn .5s ease-out forwards;animation-delay:calc(var(--i) * 60ms);}
+.l-cam::after{content:'';position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent 0 3px,color-mix(in srgb,var(--text) 4%,transparent) 3px 4px);}
+.l-cam em{position:absolute;left:6px;bottom:4px;font:500 9px var(--mono);font-style:normal;color:var(--text-3);letter-spacing:.04em;z-index:1;}
+.l-cam::before{content:'';position:absolute;top:6px;right:6px;width:5px;height:5px;border-radius:50%;background:var(--v-valid);z-index:1;
+  animation:lRec 2s ease-in-out infinite;animation-delay:calc(var(--i) * 170ms);}
+.l-box{position:absolute;left:30%;top:24%;width:34%;height:46%;border:2px solid var(--st-warning);border-radius:3px;z-index:1;
+  opacity:0;animation:lDetect 6s ease-in-out infinite;animation-delay:var(--d);}
+.l-box::after{content:'';position:absolute;inset:-1px;background:color-mix(in srgb,var(--st-warning) 16%,transparent);}
+.l-scan{position:absolute;left:-4px;right:-4px;height:36px;top:-40px;pointer-events:none;
+  background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--accent) 22%,transparent),transparent);
+  animation:lScan 4.5s cubic-bezier(.45,0,.55,1) infinite 1s;}
+.login h1.l-portal-h{animation:lUp .6s ease-out both .35s;}
+.login .l-brand p.dim,.l-points{animation:lUp .6s ease-out both .5s;}
+.login .l-card{animation:lCard .55s cubic-bezier(.2,.7,.3,1) both .15s;}
+.login .l-card .input:focus{box-shadow:0 0 0 4px var(--accent-soft);}
+.login .l-card .btn.primary{transition:transform var(--t-fast),background var(--t-fast);}
+.login .l-card .btn.primary:active{transform:scale(.985);}
+@keyframes lCamIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+@keyframes lRec{0%,100%{opacity:1;}50%{opacity:.25;}}
+@keyframes lDetect{0%,8%{opacity:0;transform:scale(1.25);}14%,40%{opacity:1;transform:scale(1);}52%,100%{opacity:0;transform:scale(1);}}
+@keyframes lScan{0%{top:-40px;}100%{top:calc(100% + 4px);}}
+@keyframes lUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+@keyframes lCard{from{opacity:0;transform:translateY(14px) scale(.985);}to{opacity:1;transform:none;}}
+/* camera tiles read as dark CCTV feeds in both themes */
+.l-cam{background:radial-gradient(120% 90% at 30% 20%,#2b3852 0%,#161d2b 70%);border-color:#2a3446;}
+.l-cam::after{background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(255,255,255,.035) 3px 4px);}
+.l-cam em{color:rgba(255,255,255,.55);}

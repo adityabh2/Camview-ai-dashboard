@@ -75,8 +75,35 @@ not sent again unless someone marks it **Valid** later.
 
 ### 4.3 Filters
 
-Status tabs (Pending, Valid, Invalid, Exception), quick views (Needs review, Not acknowledged, Camera issues …),
-search, project, client, exam, alert type, centre, camera, and dates (**Today** / **All dates** / from–to).
+* **Project tabs** at the top (one per project code; **All projects** shows every one).
+* **Alert-type chips** (CHT, MD, ZI …) with the number of alerts of each type under the current filters; one
+  click shows only that type.
+* Status tabs (Pending, Valid, Invalid, Exception), quick views (Needs review, Not acknowledged, Camera issues …),
+  search, project, client, exam, alert type, centre, camera, and dates (**Today** / **All dates** / from–to).
+
+### 4.4 Archive
+
+* **Archive N shown** hides the alerts on screen from every list, count, map and report. They are kept.
+* **Archived** shows the archived alerts; **Restore** brings them back.
+* **Delete** (administrators only, archived alerts only) removes them for good: their decisions, tickets and
+  client deliveries go, and they never come back even if Camview sends them again. The audit trail is kept.
+* A whole exam: Dashboard › **Manage codes** › **Archive** stops monitoring that project code and keeps all of
+  its data. Restore it there, or (administrator) delete it.
+
+---
+
+## 4a. HMS board (alerts per classification, live)
+
+Menu › **HMS** shows one tile per alert type of the feature list: alerts **live now** (green, last 30 minutes),
+**today**, in the loaded window, and still waiting for a decision, plus when the latest one happened. The top
+row shows the same totals and the cameras online / offline. The board updates by itself as alerts arrive.
+Click a tile to open those alerts. Use the project tabs to see one exam.
+
+## 4b. Map
+
+* **One project selected:** only that project's centres, zoomed to them; colour = centre status.
+* **All projects:** each project has its own colour (legend at the side); the ring shows the centre status.
+* **Alarm** = a live alert waiting for review, **Warning** = other alerts waiting, **OK** = nothing waiting.
 
 ---
 
@@ -97,7 +124,8 @@ generate a password. Give the client the sign-in name, the password and the port
 
 1. Open the address you were given and sign in.
 2. **Overview:** how many alerts you received, how many you have not opened yet, and the latest alerts.
-3. **Alerts:** every alert for your exams. **Opening an alert marks it as read**, and the operations team
+3. **Alerts:** every alert for your exams. Filter by alert type with the chips at the top, by exam, and by
+   read / unread. **Opening an alert marks it as read**, and the operations team
    is told. There is no separate button.
 4. Each alert shows its type, place, time, and the photo or video evidence.
 5. **Reports:** your daily reports and the final report of each exam.

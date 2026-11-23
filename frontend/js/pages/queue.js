@@ -3,7 +3,7 @@
 // new alerts are marked NEW in place and nothing you are looking at jumps away.
 
 import * as api from '../core/api.js';
-import { on, pref, setPref } from '../core/state.js';
+import { on, pref, setPref, can, session } from '../core/state.js';
 import { setTitle } from '../core/layout.js';
 import { esc, icon, fmt, empty, errorBox, skeleton, toast, pager, delegate, morph, $, $$ } from '../core/ui.js';
 import { alertRow, rememberQueue } from '../components/queue.js';
@@ -11,7 +11,7 @@ import { alertRow, rememberQueue } from '../components/queue.js';
 const TABS = [['all', 'All'], ['pending', 'Pending'], ['valid', 'Valid'], ['invalid', 'Invalid'], ['exception', 'Exception']];
 // Two kinds of records come from Camview: alerts to decide (image + video) and camera online/offline events (no media).
 const KINDS = [['alert', 'Alerts', 'alert'], ['camera_status', 'Camera status events', 'camera']];
-const FILTERS = ['search', 'code', 'projectId', 'client', 'exam', 'priority', 'centre', 'camera', 'city', 'by', 'from', 'to', 'kind', 'type', 'range', 'view'];
+const FILTERS = ['search', 'code', 'archived', 'projectId', 'client', 'exam', 'priority', 'centre', 'camera', 'city', 'by', 'from', 'to', 'kind', 'type', 'range', 'view'];
 // Operational views: the same records, filtered by what matters operationally (server-side, on the canonical alert).
 const VIEWS = [['needs_review', 'Needs review', 'pending'], ['unacknowledged', 'Not acknowledged', 'pending'], ['client_eligible', 'Client eligible', 'all'], ['client_shared', 'Client shared', 'all'],
   ['camera_issues', 'Camera issues', 'all'], ['recording_issues', 'Recording issues', 'all']];
@@ -48,6 +48,8 @@ export default {
       <div class="tabs kind-tabs ${q.kind === 'camera_status' ? '' : 'hidden'}" role="tablist" id="q-kinds" aria-label="Kind of record">${KINDS.map(([k, l, ic]) => `<button class="tab ${k === q.kind ? 'on' : ''}" role="tab" aria-selected="${k === q.kind}" data-kind="${k}">${icon(ic, 's')} ${l}<span class="n" data-kn="${k}">·</span></button>`).join('')}</div>
       <div class="tabs" role="tablist" id="q-tabs">${TABS.map(([k, l]) => `<button class="tab ${k === q.status ? 'on' : ''}" role="tab" aria-selected="${k === q.status}" data-tab="${k}">${l}<span class="n" data-n="${k}">·</span></button>`).join('')}</div>
       <div class="q-views ${q.kind === 'camera_status' ? 'hidden' : ''}" role="group" aria-label="Operational views" id="q-views">${VIEWS.map(([k, l]) => `<button type="button" class="chip ${k === q.view ? 'on' : ''}" aria-pressed="${k === q.view}" data-view="${k}">${l}<span class="n" data-vn="${k}">·</span></button>`).join('')}</div>
+      <div class="q-types" role="group" aria-label="Alert type" id="q-types"></div>
+      <div class="q-archbar" id="q-archbar"></div>
       <div class="filters">
         <input class="input" style="min-width:220px" id="f-search" data-page-search placeholder="Search alert, camera, room, exam…  ( / )" value="${esc(q.search)}">
         <select class="select" id="f-projectId" aria-label="Project"><option value="">All projects</option></select>
@@ -85,7 +87,7 @@ export default {
 
     let loadedAt = null;
     const loadCodes = async () => {
-      try { codes = (await api.get('/api/project-codes')).items || []; } catch { codes = []; }
+      try { codes = ((await api.get('/api/project-codes')).items || []).filter((c) => !c.archived); } catch { codes = []; }
       if (q.code && !codes.some((c) => c.code === q.code)) { q.code = ''; setPref('dashCode', ''); }
       $('#q-codes', el).innerHTML = codeTabs();
     };
@@ -94,6 +96,7 @@ export default {
       ctrl = new AbortController();
       const btn = $('#q-refresh', el);
       btn?.classList.add('loading');
+      if (!quiet) $('#q-rows', el)?.classList.add('is-loading');   // the old list dims at once while the new one loads
       try {
         const r = await api.get('/api/queue', params(), { signal: ctrl.signal });
         if (ctx.isStale()) return;
@@ -105,7 +108,7 @@ export default {
         if (!data) { $('#q-rows', el).innerHTML = errorBox(e); $('[data-retry]', el)?.addEventListener('click', () => load()); }
         else if (!quiet) toast(`Refresh failed — showing the last data. ${e.message}`, 'error');
       } finally {
-        if (!ctx.isStale()) btn?.classList.remove('loading');
+        if (!ctx.isStale()) { btn?.classList.remove('loading'); $('#q-rows', el)?.classList.remove('is-loading'); }
       }
     };
 
@@ -117,6 +120,10 @@ export default {
       opts('#f-centre', f.centres.map((c) => [c, c]), q.centre);
       opts('#f-camera', f.cameras.map((c) => [c, c]), q.camera);
       opts('#f-type', (f.types || []).map(([v, l]) => [v, l || `Alert type ${v}`]), q.type);
+      const tc = f.typeCounts || [];
+      $('#q-types', el).innerHTML = tc.length ? `<button type="button" class="tchip ${q.type ? '' : 'on'}" data-type="" aria-pressed="${!q.type}">All types</button>`
+        + tc.map((t) => `<button type="button" class="tchip ${String(q.type) === String(t.type) ? 'on' : ''}" data-type="${esc(t.type)}" aria-pressed="${String(q.type) === String(t.type)}" title="${esc(t.name)}">
+            <b>${esc(t.short)}</b><span>${esc(t.name)}</span><span class="n">${t.count}</span>${t.live ? `<span class="tchip-live" title="Live now">${t.live} live</span>` : ''}</button>`).join('') : '';
       $('#f-by', el).value = q.by || '';
       TABS.forEach(([k]) => { const n = $(`[data-n="${k}"]`, el); if (n) n.textContent = data.counts[k] ?? 0; });
       VIEWS.forEach(([k]) => { const n = $(`[data-vn="${k}"]`, el); if (n) n.textContent = data.views?.[k] ?? 0; });
@@ -128,6 +135,14 @@ export default {
       $('#q-fresh', el).innerHTML = (failed.length ? `<span class="sla-attention">${icon('alert', 's')} CAMVIEW DATA TEMPORARILY UNAVAILABLE (${failed.length} project${failed.length === 1 ? '' : 's'}) — showing last data</span> · ` : '')
         + `<span title="When this list was last re-read">Updated ${fmt.time(loadedAt?.toISOString())}</span>`;
       rememberQueue(data.items, { ...Object.fromEntries(FILTERS.map((k) => [k, q[k]])), status: q.status });
+      const admin = session.user?.roleId === 'super_admin';
+      $('#q-archbar', el).innerHTML = !can('settings.manage') ? '' : q.archived === '1'
+        ? `<span class="b outline">${icon('download', 's')} Archived alerts</span><span class="muted">Hidden from every list, count and report; kept and restorable.</span><span class="grow"></span>
+           ${data.items.length ? `<button type="button" class="btn sm" data-arch-act="restore">${icon('refresh', 's')} Restore ${data.items.length} shown</button>
+           ${admin ? `<button type="button" class="btn sm danger" data-arch-act="delete">${icon('trash', 's')} Delete ${data.items.length} shown</button>` : ''}` : ''}
+           <button type="button" class="btn sm ghost" data-arch-view="0">Back to alerts</button>`
+        : `<span class="grow"></span>${data.items.length ? `<button type="button" class="btn sm ghost" data-arch-act="archive" title="Hide these alerts from every list (kept, restorable)">${icon('download', 's')} Archive ${data.items.length} shown</button>` : ''}
+           <button type="button" class="btn sm ghost" data-arch-view="1">${icon('download', 's')} Archived</button>`;
       const rows = $('#q-rows', el);
       // Patched in place: rows that stayed keep their thumbnails, focus and scroll position; new rows slide in marked NEW.
       if (!data.items.length) {
@@ -161,6 +176,23 @@ export default {
       setPref('dashCode', b.dataset.code);
       $$('.dm-tab[data-code]', el).forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); });
       set({ code: b.dataset.code, projectId: '' });
+    }));
+    ctx.onCleanup(delegate(el, 'click', '[data-arch-view]', (e, b) => { set({ archived: b.dataset.archView === '1' ? '1' : '', status: 'all' }); }));
+    ctx.onCleanup(delegate(el, 'click', '[data-arch-act]', async (e, b) => {
+      const kind = b.dataset.archAct, ids = (data?.items || []).map((a) => a.alarmId);
+      if (!ids.length) return;
+      if (kind === 'delete' && !window.confirm(`Delete ${ids.length} archived alert(s) for good? Their decisions, tickets and client deliveries are removed and they never come back. The audit trail is kept. This cannot be undone.`)) return;
+      if (kind === 'archive' && !window.confirm(`Archive ${ids.length} alert(s)? They leave every list and count but are kept and can be restored.`)) return;
+      b.disabled = true;
+      try {
+        const r = await api.post(kind === 'archive' ? '/api/archive/alerts' : `/api/archive/alerts/${kind}`, { alarmIds: ids });
+        toast(kind === 'archive' ? `${r.archived} alert(s) archived` : kind === 'restore' ? `${r.restored} alert(s) restored` : `${r.deleted} alert(s) deleted`, 'success');
+        load();
+      } catch (err) { toast(err.message, 'error'); b.disabled = false; }
+    }));
+    ctx.onCleanup(delegate(el, 'click', '.tchip[data-type]', (e, b) => {
+      $('#f-type', el).value = b.dataset.type;
+      set({ type: b.dataset.type });
     }));
     ctx.onCleanup(delegate(el, 'click', '[data-kind]', (e, b) => {
       $$('[data-kind]', el).forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-selected', x === b); });

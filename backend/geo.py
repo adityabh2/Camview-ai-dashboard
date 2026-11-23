@@ -40,8 +40,7 @@ MIN_INTERVAL = 1.1              # Nominatim usage policy: max 1 request per seco
 RETRY_AFTER = 15 * 60           # a network error (not a "not found") is retried after this many seconds
 SPREAD_DEG = 0.012              # ~1.3 km: centres of one city are spread in a small circle around it
 
-RULE = ("ALARM = at least one critical or high alert waiting for review · WARNING = other alerts waiting for "
-        "review · OK = nothing waiting for review. Same rule as the centre board.")
+RULE = ("ALARM = a live alert (last 30 min) waiting for review · WARNING = other alerts waiting for review · OK = nothing waiting")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS geo_places (
@@ -339,7 +338,7 @@ def build(items, rng="window", known=None, label_for=None, now=None):
         alerts = [a for a in allk if a.get("eventKind") != "camera_status"]
         ranged = [a for a in alerts if in_range(a, rng, now)]
         pending = [a for a in ranged if a.get("decision") == "pending"]
-        urgent = [a for a in pending if a.get("priority") in ("critical", "high")]
+        urgent = [a for a in pending if a.get("live")]       # a LIVE alert waiting for review (no priority guess)
         cams = {}
         for a in sorted(allk, key=lambda x: x.get("lastInstance") or ""):
             h = a.get("health") or {}

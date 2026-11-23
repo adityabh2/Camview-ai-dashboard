@@ -61,10 +61,15 @@ def run():
             # administrator typed in the Dictionary is kept
             conn.execute("UPDATE alarm_types SET name=?, description=? WHERE id=? AND (description LIKE ? OR name LIKE ?)",
                          (name, f"{desc}. {alarms.FEATURE_NOTE}", tid, f"%{alarms.INFERRED_NOTE[:40]}%", "Alert type %"))
-        for tid, name in config.ALARM_TYPE_NAMES.items():                         # CAMVIEW_ALARM_TYPE_NAMES wins
+        for tid, name in config.ALARM_TYPE_NAMES.items():   # CAMVIEW_ALARM_TYPE_NAMES names codes OUTSIDE the list only
+            if tid in alarms.FEATURES:
+                continue
             conn.execute("INSERT INTO alarm_types (id, name, description) VALUES (?,?,?) "
                          "ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description",
                          (tid, name, "From CAMVIEW_ALARM_TYPE_NAMES"))
+        for tid, (name, desc, _sev) in alarms.DEFAULT_TYPE_NAMES.items():   # the feature list always wins
+            conn.execute("UPDATE alarm_types SET name=?, description=? WHERE id=? AND name<>?",
+                         (name, f"{desc}. {alarms.FEATURE_NOTE}", tid, name))
     ensure_admin(force=not db.rows("SELECT 1 FROM users LIMIT 1"))
     import project_codes
     project_codes.seed_from_config()           # CAMVIEW_PROJECT_CODES joins the project-code registry

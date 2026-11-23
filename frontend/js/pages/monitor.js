@@ -177,7 +177,7 @@ export default {
 
     // ------------------------------------------------------------------ list
     const params = () => {
-      const q = { projectId: pid, size: 100, sort: tab === 'toReview' ? 'priority' : 'lastInstance', dir: tab === 'toReview' ? 'asc' : 'desc' };
+      const q = { projectId: pid, size: 100, sort: 'lastInstance', dir: 'desc' };   // newest first (no priority ranking)
       const quick = [];
       if (tab !== 'all') quick.push(tab);
       if (centre === '__unmapped__') quick.push('unmapped');

@@ -372,6 +372,17 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(status, next_run_at);
+-- archived alerts: hidden from every list and count, kept (restorable); deleted = removed for good by an administrator
+CREATE TABLE IF NOT EXISTS archived_alerts (
+    alarm_id    TEXT PRIMARY KEY,
+    project_id  TEXT,
+    archived_by TEXT,
+    archived_at TEXT NOT NULL,
+    reason      TEXT,
+    deleted     INTEGER NOT NULL DEFAULT 0,
+    deleted_by  TEXT,
+    deleted_at  TEXT
+);
 -- data-quality events: malformed / unusable Camview records are counted and kept, never silently dropped
 CREATE TABLE IF NOT EXISTS dq_events (
     key        TEXT PRIMARY KEY,

@@ -4,7 +4,7 @@
 //   "Not on the map". Leaflet is loaded on demand; if it cannot load, the same data is shown as a board.
 
 import * as api from '../core/api.js';
-import { on, setProject } from '../core/state.js';
+import { on, setProject, pref, setPref } from '../core/state.js';
 import { setTitle } from '../core/layout.js';
 import { css } from '../core/charts.js';
 import { esc, icon, fmt, kpi, empty, errorBox, skeleton, toast, delegate, morph, $, $$ } from '../core/ui.js';
@@ -14,6 +14,8 @@ const LEAFLET_CSS = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leafle
 const INDIA = { center: [22.6, 79.0], zoom: 5 };
 const RANGES = [['today', 'Today'], ['24h', 'Last 24 h'], ['window', 'All loaded']];
 const FILTERS = [['all', 'All'], ['alarm', 'Alarm'], ['warning', 'Warning'], ['ok', 'OK'], ['offline', 'Cameras offline']];
+// one colour per project when every project is shown (fill); the ring keeps the centre's status
+const PROJECT_COLORS = ['#3b47c9', '#0e9f8e', '#d97706', '#c026d3', '#0284c7', '#65a30d', '#e11d48', '#7c3aed', '#ca8a04', '#0d9488'];
 const STATUS = { alarm: ['ALARM', 'alert', '--st-critical'], warning: ['WARNING', 'bang', '--st-warning'], ok: ['OK', 'check', '--st-good'] };
 const REASONS = {
   no_city: 'Camview sent no city for this centre',
@@ -57,6 +59,14 @@ export default {
     let data = null, L = null, libTried = false, map = null, layer = null, fitted = false, loading = false, again = false;
     let placing = null;                    // centre key an administrator is placing
     const markers = new Map();             // point key -> circle marker
+    let codes = [];
+    let selCode = pref('dashCode', '') || '';  // '' = every project, coloured per project
+    const projColor = new Map();           // projectId -> colour (stable while the page is open)
+    const colorOf = (pid) => {
+      if (!projColor.has(pid)) projColor.set(pid, PROJECT_COLORS[projColor.size % PROJECT_COLORS.length]);
+      return projColor.get(pid);
+    };
+    const codeParts = (c) => String(c || '').split('/').map((s) => s.trim()).filter(Boolean);
 
     el.innerHTML = `
       <div class="page-head"><div><h2>Operations map</h2><p id="mp-fresh">Loading…</p></div></div>
@@ -68,6 +78,7 @@ export default {
           <div class="mp-board" id="mp-board" hidden></div>
         </section>
         <aside class="card mp-panel" aria-label="Map filters and lists">
+          <div class="mp-sec"><div class="dm-tabs mp-codes" id="mp-codes" aria-label="Project"></div></div>
           <div class="mp-sec">
             <input class="input mp-search" id="mp-search" type="search" data-page-search placeholder="Search centre, code or city" value="${esc(search)}" aria-label="Search centres">
             <div class="seg mp-range" role="group" aria-label="Alert range">${RANGES.map(([k, l]) => `<button data-range="${k}" class="${k === range ? 'on' : ''}" aria-pressed="${k === range}">${l}</button>`).join('')}</div>
@@ -85,7 +96,13 @@ export default {
       if (loading) { again = true; return; }
       loading = true;
       try {
-        const d = await api.get('/api/map', { range });
+        if (!codes.length) {
+          try { codes = ((await api.get('/api/project-codes')).items || []).filter((c) => !c.archived); } catch { codes = []; }
+          if (selCode && !codes.some((c) => c.code === selCode)) { selCode = ''; setPref('dashCode', ''); }
+        }
+        $('#mp-codes', el).innerHTML = codes.length ? `<button type="button" class="dm-tab ${selCode ? '' : 'on'}" data-mcode="">All projects</button>`
+          + codes.map((c) => `<button type="button" class="dm-tab ${selCode === c.code ? 'on' : ''}" data-mcode="${esc(c.code)}" title="${esc(c.code)}">${esc(codeParts(c.code)[0] || c.code)}<span class="muted">${esc(codeParts(c.code).slice(1, 3).join('/'))}</span></button>`).join('') : '';
+        const d = await api.get('/api/map', selCode ? { range, code: selCode } : { range });
         if (ctx.isStale()) return;
         data = d;
         paint();
@@ -138,6 +155,9 @@ export default {
 
     const paintLegend = () => {
       $('#mp-legend', el).innerHTML = `
+        ${allProjects() ? `<div class="mp-legend mp-proj-legend">${[...new Map(data.points.map((p) => [p.projectId, p.projectCode])).entries()]
+          .map(([pid, code]) => `<span title="${esc(code)}"><i class="mp-dot" style="background:${colorOf(pid)}"></i>${esc(codeParts(code)[0] || code)}</span>`).join('')}</div>
+          <div class="muted mp-note">Colour = project · ring = centre status</div>` : ''}
         <div class="mp-legend">
           ${Object.entries(STATUS).map(([k, [lab, ic]]) => `<span><i class="mp-dot ${k}"></i>${icon(ic, 's')} ${lab}</span>`).join('')}
           <span><i class="mp-dot ring"></i> camera offline</span>
@@ -238,13 +258,15 @@ export default {
 
     // ------------------------------------------------------------------ map
     const color = (p) => css(STATUS[p.status][2]) || '#888';
+    const allProjects = () => !selCode && new Set((data?.points || []).map((p) => p.projectId)).size > 1;
+    const fill = (p) => (allProjects() ? colorOf(p.projectId) : color(p));
     const radius = (p) => Math.min(22, 5 + 2 * Math.sqrt(p.counts.alerts || 0));
     const style = (p) => ({
       radius: radius(p),
       color: p.counts.camerasOffline ? (css('--text') || '#fff') : color(p),
-      weight: p.counts.camerasOffline ? 3 : 1.5,
+      weight: p.counts.camerasOffline ? 3 : allProjects() ? 2.5 : 1.5,
       dashArray: p.precision === 'city' ? '4 3' : null,
-      fillColor: color(p),
+      fillColor: fill(p),
       fillOpacity: p.precision === 'city' ? 0.45 : 0.7,
       opacity: 0.95,
     });
@@ -368,6 +390,13 @@ export default {
       range = b.dataset.range;
       ctx.setQuery({ range: range === 'window' ? '' : range });
       $$('[data-range]', el).forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); });
+      load();
+    }));
+    ctx.onCleanup(delegate(el, 'click', '[data-mcode]', (e, b) => {
+      selCode = b.dataset.mcode;
+      setPref('dashCode', selCode);                 // the same choice as on the Dashboard and Alerts pages
+      $$('[data-mcode]', el).forEach((x) => x.classList.toggle('on', x === b));
+      fitted = false;                               // zoom to the chosen project's centres
       load();
     }));
     ctx.onCleanup(delegate(el, 'click', '[data-city]', (e, b) => {

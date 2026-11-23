@@ -27,6 +27,7 @@ route('/monitoring', p('monitoring'), { audience: I, perms: ['live.view', 'alarm
 route('/management', p('management'), { audience: I, perms: ['client.view', 'nomenclature.view', 'alarm.view'], any: true });
 route('/health', p('health'), { audience: I, perms: ['alarm.view'] });
 route('/monitor', p('monitor'), { audience: I, perms: ['live.view', 'alarm.view'], any: true });
+route('/hms', p('hms'), { audience: I, perms: ['live.view', 'alarm.view'], any: true });
 route('/command', p('command'), { audience: I, perms: ['dashboard.view'] });
 route('/live', p('live'), { audience: I, perms: ['live.view'] });
 route('/work', p('work'), { audience: I, perms: ['work.view'] });

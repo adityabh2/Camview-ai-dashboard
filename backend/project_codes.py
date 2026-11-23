@@ -143,7 +143,7 @@ def refresh(force=False):
     try:
         from camview_client import ApiError, lookup_projects
         for e in entries():
-            if e.get("source") != "lookup":
+            if e.get("source") != "lookup" or e.get("archived"):
                 continue
             code = e["code"]
             try:
@@ -251,3 +251,75 @@ def seed_from_config():
         if added:
             _save(reg)
     return added
+
+
+# ---- archive (codes): monitoring stops, everything is kept; only an administrator deletes ----------------------
+
+def archive_code(code, user=None):
+    from camview_client import ApiError
+    code = str(code or "").strip()
+    with _lock:
+        reg = _load()
+        if code not in reg:
+            raise ApiError("not_found", "This project code is not registered.", 404)
+        reg[code]["archived"] = True
+        reg[code]["archivedAt"] = _now()
+        reg[code]["archivedBy"] = (user or {}).get("name")
+        ids = set(reg[code].get("projectIds", []))
+        still = {p for c, e in reg.items() if c != code and not e.get("archived") for p in e.get("projectIds", [])}
+        _save(reg)
+    stopped = sorted((ids - still) - {config.DEFAULT_PROJECT_ID}, key=int)
+    _unmonitor(set(stopped))
+    import datasource
+    datasource.reset()
+    db.audit("codes.archive", user, "project_code", code, "active", "archived", {"stoppedMonitoring": stopped})
+    return {"code": code, "archived": True, "stoppedMonitoring": stopped}
+
+
+def restore_code(code, user=None):
+    from camview_client import ApiError
+    code = str(code or "").strip()
+    with _lock:
+        reg = _load()
+        if code not in reg or not reg[code].get("archived"):
+            raise ApiError("not_found", "This project code is not archived.", 404)
+        reg[code].pop("archived", None)
+        reg[code].pop("archivedAt", None)
+        reg[code].pop("archivedBy", None)
+        ids = [str(p) for p in reg[code].get("projectIds", [])]
+        names = reg[code].get("names", {})
+        _save(reg)
+    _monitor(ids, code, names)
+    import datasource
+    datasource.reset()
+    db.audit("codes.restore", user, "project_code", code, "archived", "active", {"projectIds": ids})
+    return {"code": code, "archived": False, "projectIds": ids}
+
+
+def delete_code(code, user=None):
+    """Administrator only, archived codes only: unregistered, and the centres / cameras built from its Camview data
+    are removed. Clients, reports and the audit trail are kept."""
+    from camview_client import ApiError
+    import archive
+    if not archive.is_admin(user):
+        raise ApiError("forbidden", "Only an administrator can delete.", 403)
+    code = str(code or "").strip()
+    e = _load().get(code)
+    if not e:
+        raise ApiError("not_found", "This project code is not registered.", 404)
+    if not e.get("archived"):
+        raise ApiError("not_eligible", "Archive the project code first; only archived codes can be deleted.", 409)
+    ids = [str(p) for p in e.get("projectIds", [])]
+    with _lock:
+        reg = _load()
+        reg.pop(code, None)
+        _save(reg)
+    import nomenclature
+    removed = 0
+    for pid in ids:
+        if pid != config.DEFAULT_PROJECT_ID:
+            removed += nomenclature.delete_auto_project(pid) or 0
+    import datasource
+    datasource.reset()
+    db.audit("codes.delete", user, "project_code", code, "archived", "deleted", {"projectIds": ids, "nodesRemoved": removed})
+    return {"code": code, "deleted": True, "nodesRemoved": removed}

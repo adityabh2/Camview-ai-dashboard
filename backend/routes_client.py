@@ -80,8 +80,17 @@ def alerts():
     if s:
         data = [a for a in data if s in a["alarmId"].lower() or s in (a.get("alarmTypeName") or "").lower()
                 or any(s in c["code"].lower() for c in a.get("context", []))]
+    # alert type (classification): counts under the other filters, then the type filter itself
+    by_type = {}
+    for a in data:
+        key = a.get("alarmTypeName") or "Unknown alert code"
+        t = by_type.setdefault(key, {"name": key, "short": a.get("alarmTypeShort") or "?", "count": 0})
+        t["count"] += 1
+    if f.get("type"):
+        data = [a for a in data if (a.get("alarmTypeName") or "Unknown alert code") == f["type"]]
     exams_seen = sorted({(a["exam"]["id"], a["exam"]["name"]) for a in everything if a.get("exam")}, key=lambda x: x[1])
-    return jsonify({"items": data, "total": len(data), "exams": [{"id": i, "name": n} for i, n in exams_seen]})
+    return jsonify({"items": data, "total": len(data), "exams": [{"id": i, "name": n} for i, n in exams_seen],
+                    "types": sorted(by_type.values(), key=lambda t: -t["count"])})
 
 
 @bp.route("/api/client/alerts/<alarm_id>")

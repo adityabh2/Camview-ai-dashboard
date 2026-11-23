@@ -521,6 +521,10 @@ def auto_sync(items):
     from datetime import datetime, timedelta, timezone
     hours = pol.get("autoShareHours")
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=float(hours))).strftime("%Y-%m-%dT%H:%M:%S") if hours else ""
+    import archive
+    hidden = archive.hidden_ids()
+    if hidden:
+        items = [a for a in items if a["alarmId"] not in hidden]
     ids = [a["alarmId"] for a in items]
     reviews = db.reviews_for(ids)
     decided = {i for i, r in reviews.items() if r["status"] in ("marked_valid", "marked_invalid", "marked_exception")}

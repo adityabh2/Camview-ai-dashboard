@@ -13,6 +13,9 @@ export default {
     <div class="login">
       <section class="l-brand">
         <div class="row login-brand"><span data-brand-mark>${brandMarkHtml()}</span><div><div class="brand-name" data-brand-name>${esc(brand.name)}</div><div class="brand-sub" data-brand-sub>${esc(brand.subtitle)}</div></div></div>
+        <div class="l-scene" aria-hidden="true">${Array.from({ length: 12 }, (_, i) => `<span class="l-cam" style="--i:${i}">
+          <em>CAM ${String(101 + i)}</em>${[1, 6, 10].includes(i) ? `<i class="l-box" style="--d:${[1, 6, 10].indexOf(i) * 2}s"></i>` : ''}</span>`).join('')}
+          <span class="l-scan"></span></div>
         ${session.clientPortal ? `<div>
           <h1 class="l-portal-h">Exam alerts portal</h1>
           <p class="dim" style="max-width:520px;font-size:15px">See the alerts raised at your exam centres, with photo and video evidence, and acknowledge them so the operations team knows you have seen them.</p>

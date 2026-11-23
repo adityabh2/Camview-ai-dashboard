@@ -638,7 +638,8 @@ def settings_projects_lookup():
 
 def _code_entry(e):
     return {"code": e["code"], "source": e.get("source"), "addedAt": e.get("addedAt"), "resolvedAt": e.get("resolvedAt"),
-            "error": e.get("error"), "projects": [{**project_label(p), "name": (e.get("names") or {}).get(p) or project_label(p).get("name")}
+            "error": e.get("error"), "archived": bool(e.get("archived")), "archivedAt": e.get("archivedAt"),
+            "archivedBy": e.get("archivedBy"), "projects": [{**project_label(p), "name": (e.get("names") or {}).get(p) or project_label(p).get("name")}
                                                   for p in e.get("projectIds", [])]}
 
 
@@ -648,8 +649,9 @@ def project_codes_list():
     """The registered project codes (code first: each code stands for every Camview project carrying it)."""
     import project_codes
     project_codes.refresh_soon()                       # picks up projects Camview added under a known code
+    import archive
     return jsonify({"items": [_code_entry(e) for e in project_codes.entries()],
-                    "canManage": "settings.manage" in _user()["permissions"]})
+                    "canManage": "settings.manage" in _user()["permissions"], "canDelete": archive.is_admin(_user())})
 
 
 @bp.route("/api/project-codes", methods=["POST"])
@@ -666,6 +668,88 @@ def project_codes_remove():
     """POST with the code in the body: codes contain slashes, so they never go in the URL path."""
     import project_codes
     return jsonify(project_codes.unregister(body().get("code"), _user()))
+
+
+@bp.route("/api/project-codes/archive", methods=["POST"])
+@rbac.internal("settings.manage")
+def project_codes_archive():
+    import project_codes
+    return jsonify(project_codes.archive_code(body().get("code"), _user()))
+
+
+@bp.route("/api/project-codes/restore", methods=["POST"])
+@rbac.internal("settings.manage")
+def project_codes_restore():
+    import project_codes
+    return jsonify(project_codes.restore_code(body().get("code"), _user()))
+
+
+@bp.route("/api/project-codes/delete", methods=["POST"])
+@rbac.internal("settings.manage")
+def project_codes_delete():
+    """Administrator only (checked in project_codes.delete_code), archived codes only."""
+    import project_codes
+    return jsonify(project_codes.delete_code(body().get("code"), _user()))
+
+
+# ---- archived alerts ----------------------------------------------------------------------------------------------
+
+@bp.route("/api/archive")
+@rbac.internal("alarm.view", "settings.manage", any_of=True)
+def archive_overview():
+    import archive
+    import project_codes
+    return jsonify({"alerts": archive.archived_list(), "codes": [_code_entry(e) for e in project_codes.entries() if e.get("archived")],
+                    "canArchive": "settings.manage" in _user()["permissions"], "canDelete": archive.is_admin(_user())})
+
+
+@bp.route("/api/archive/alerts", methods=["POST"])
+@rbac.internal("settings.manage")
+def archive_alerts():
+    """{alarmIds: [...]} archives those alerts; {code: "..."} archives every alert currently loaded for that project
+    code (an exam that is over). Archived alerts are kept and can be restored."""
+    import archive
+    from routes_queue import _all_alarms
+    b = body()
+    user = _user()
+    if b.get("code"):
+        items, _ = _all_alarms(user, None, str(b["code"]))
+        pairs = [(a["alarmId"], a.get("projectId")) for a in items]
+    else:
+        ids = [str(x) for x in (b.get("alarmIds") or []) if str(x).strip()]
+        if not ids:
+            raise ApiError("bad_request", "Give alarmIds or a project code to archive.", 400)
+        items, _ = _all_alarms(user)
+        known = {a["alarmId"]: a.get("projectId") for a in items}
+        pairs = [(i, known.get(i)) for i in ids]
+    n = archive.archive(pairs, user, str(b.get("reason") or "").strip()[:300] or None)
+    datasource.reset()
+    return jsonify({"archived": n})
+
+
+@bp.route("/api/archive/alerts/restore", methods=["POST"])
+@rbac.internal("settings.manage")
+def archive_alerts_restore():
+    import archive
+    ids = [str(x) for x in (body().get("alarmIds") or [])]
+    if not ids:
+        raise ApiError("bad_request", "Give the alarmIds to restore.", 400)
+    n = archive.restore(ids, _user())
+    datasource.reset()
+    return jsonify({"restored": n})
+
+
+@bp.route("/api/archive/alerts/delete", methods=["POST"])
+@rbac.internal("settings.manage")
+def archive_alerts_delete():
+    """Administrator only (checked in archive.delete), archived alerts only."""
+    import archive
+    ids = [str(x) for x in (body().get("alarmIds") or [])]
+    if not ids:
+        raise ApiError("bad_request", "Give the alarmIds to delete.", 400)
+    deleted = archive.delete(ids, _user())
+    datasource.reset()
+    return jsonify({"deleted": len(deleted)})
 
 
 @bp.route("/api/project-codes/refresh", methods=["POST"])
@@ -924,6 +1008,9 @@ def dictionary_types():
             policy = t.get("clientSharePolicy") or t.get("client_share_policy") or "allowed"
             if policy not in ("allowed", "never", "review"):
                 raise ApiError("bad_request", "Client share policy must be allowed, review or never.", 400)
+            import alarms as alarms_mod
+            if tid in alarms_mod.FEATURES:            # official CamviewAI feature: its name cannot be changed here
+                t = {**t, "name": alarms_mod.FEATURES[tid][1]}
             conn.execute("INSERT INTO alarm_types (id, name, description, icon, severity, workflow, client_share_policy) "
                          "VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, "
                          "description=excluded.description, icon=excluded.icon, severity=excluded.severity, "

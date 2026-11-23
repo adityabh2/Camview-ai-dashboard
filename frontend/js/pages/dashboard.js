@@ -19,13 +19,16 @@ export default {
     setTitle('Dashboard', 'Alerts that need a decision');
     el.innerHTML = skeleton(6, 70);
     let data = null;
-    let codes = [];                                    // registered project codes (code first)
+    let codes = [];                                    // registered project codes (code first), archived left out
+    let allCodes = [];
+    let codesCanDelete = false;
     let codesCanManage = can('settings.manage');
     let selCode = pref('dashCode', '') || '';          // '' = all projects
     const loadCodes = async () => {
       try {
         const r = await api.get('/api/project-codes');
-        codes = r.items || []; codesCanManage = !!r.canManage;
+        allCodes = r.items || []; codes = allCodes.filter((c) => !c.archived);
+        codesCanManage = !!r.canManage; codesCanDelete = !!r.canDelete;
       } catch { codes = []; }
       if (selCode && !codes.some((c) => c.code === selCode)) { selCode = ''; setPref('dashCode', ''); }
     };
@@ -211,8 +214,15 @@ export default {
       const list = () => codes.length ? `<div class="pc-results">${codes.map((c) => `<div class="pc-row"><div class="grow" style="min-width:0">
             <b class="mono" style="overflow-wrap:anywhere">${esc(c.code)}</b>
             <div class="muted">${c.projects.map((p) => `#${esc(p.externalId)}${p.name && p.name !== c.code ? ` ${esc(p.name)}` : ''}`).join(', ') || 'No Camview project'}${c.source === 'configured' ? ' · mapped in configuration' : ''}</div></div>
-            <button type="button" class="btn sm ghost" data-rm="${esc(c.code)}">${icon('x', 's')} Remove</button></div>`).join('')}</div>`
+            <button type="button" class="btn sm ghost" data-arch="${esc(c.code)}" title="Stop monitoring, keep all data">${icon('download', 's')} Archive</button></div>`).join('')}</div>`
         : '<div class="muted">No project code registered yet.</div>';
+      const archivedList = () => {
+        const arch = allCodes.filter((c) => c.archived);
+        return arch.length ? `<div class="section-title" style="margin-top:16px">Archived codes</div><div class="pc-results">${arch.map((c) => `<div class="pc-row"><div class="grow" style="min-width:0">
+            <b class="mono" style="overflow-wrap:anywhere">${esc(c.code)}</b><div class="muted">Archived ${c.archivedAt ? fmt.dt(c.archivedAt) : ''}${c.archivedBy ? ` by ${esc(c.archivedBy)}` : ''} · data kept</div></div>
+            <button type="button" class="btn sm" data-unarch="${esc(c.code)}">${icon('refresh', 's')} Restore</button>
+            ${codesCanDelete ? `<button type="button" class="btn sm danger" data-del="${esc(c.code)}">${icon('trash', 's')} Delete</button>` : ''}</div>`).join('')}</div>` : '';
+      };
       dialog({
         title: `${icon('tree')} Project codes`,
         body: `<div class="field"><label for="pc-new">Add a project code</label>
@@ -220,11 +230,11 @@ export default {
             <div class="hint">Type it exactly as set in Camview. Camview's Project Lookup finds every project with this code; they are monitored and shown under the code. Projects added later under the same code are picked up by themselves.</div></div>
           <div id="pc-msg"></div>
           <div class="section-title" style="margin-top:14px">Registered codes</div>
-          <div id="pc-list">${list()}</div>`,
+          <div id="pc-list">${list()}</div><div id="pc-arch">${archivedList()}</div>`,
         onClose: () => load(true),
       });
       const box = document.querySelector('.dialog:last-of-type') || document;
-      const repaint = () => { $('#pc-list', box).innerHTML = list(); };
+      const repaint = () => { $('#pc-list', box).innerHTML = list(); $('#pc-arch', box).innerHTML = archivedList(); };
       const add = async () => {
         const input = $('#pc-new', box), code = input.value.trim(), btn = $('#pc-add', box);
         if (!code) { input.focus(); return; }
@@ -242,6 +252,20 @@ export default {
       $('#pc-add', box).addEventListener('click', add);
       $('#pc-new', box).addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
       box.addEventListener('click', async (e) => {
+        const act = e.target.closest('[data-arch],[data-unarch],[data-del]');
+        if (act) {
+          const code = act.dataset.arch || act.dataset.unarch || act.dataset.del;
+          const kind = act.dataset.arch ? 'archive' : act.dataset.unarch ? 'restore' : 'delete';
+          if (kind === 'delete' && !window.confirm(`Delete ${code} for good? Its centres and cameras are removed from the dashboard. Clients, reports and the audit trail are kept. This cannot be undone.`)) return;
+          act.disabled = true;
+          try {
+            await api.post(`/api/project-codes/${kind}`, { code });
+            if (selCode === code) { selCode = ''; setPref('dashCode', ''); }
+            await loadCodes(); repaint();
+            toast(kind === 'archive' ? `Archived ${code} — monitoring stopped, data kept` : kind === 'restore' ? `Restored ${code}` : `Deleted ${code}`, 'success');
+          } catch (err) { toast(err.message, 'error'); act.disabled = false; }
+          return;
+        }
         const b = e.target.closest('[data-rm]');
         if (!b) return;
         b.disabled = true;

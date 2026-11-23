@@ -8,8 +8,9 @@ import { locationLine, ackBadge, alertHref, clientThumb } from './common.js';
 export default {
   async render(el, ctx) {
     setTitle('Alerts', 'Alerts delivered to your organisation');
-    let q = { priority: '', ack: '', exam: '', search: '', ...ctx.query };
+    let q = { ack: '', exam: '', search: '', type: '', ...ctx.query };
     el.innerHTML = `<div class="page-head"><div><h2>Alerts</h2><p>Every alert delivered to your organisation, with its evidence. Opening an alert marks it as read.</p></div></div>
+      <div class="q-types" id="ca-types" role="group" aria-label="Alert type"></div>
       <div class="filters">
         <input class="input" style="min-width:240px" id="ca-search" placeholder="Search alert ID, type or location" value="${esc(q.search)}" data-page-search>
         <select class="select" id="ca-exam" aria-label="Exam"><option value="">All exams</option></select>
@@ -23,6 +24,8 @@ export default {
         const r = await api.get('/api/client/alerts', q);
         if (ctx.isStale()) return;
         $('#ca-n', el).textContent = `${r.total} alert(s)`;
+        $('#ca-types', el).innerHTML = (r.types || []).length ? `<button type="button" class="tchip ${q.type ? '' : 'on'}" data-ctype="">All types</button>`
+          + r.types.map((t) => `<button type="button" class="tchip ${q.type === t.name ? 'on' : ''}" data-ctype="${esc(t.name)}" title="${esc(t.name)}"><b>${esc(t.short)}</b><span>${esc(t.name)}</span><span class="n">${t.count}</span></button>`).join('') : '';
         const ex = $('#ca-exam', el);
         ex.innerHTML = '<option value="">All exams</option>' + (r.exams || []).map((e) => `<option value="${esc(e.id)}">${esc(e.name)}</option>`).join('');
         ex.value = q.exam || '';
@@ -41,7 +44,7 @@ export default {
           ],
           rows: r.items,
           onRow: (a) => { location.hash = alertHref(a); },
-          emptyHtml: empty('No alerts', (q.priority || q.ack || q.exam || q.search) ? 'Nothing matches these filters.' : 'No alerts yet. Alerts from your exam centres appear here as soon as they are delivered to you.', 'share'),
+          emptyHtml: empty('No alerts', (q.type || q.ack || q.exam || q.search) ? 'Nothing matches these filters.' : 'No alerts yet. Alerts from your exam centres appear here as soon as they are delivered to you.', 'share'),
         });
       } catch (e) {
         if (ctx.isStale()) return;
@@ -51,6 +54,7 @@ export default {
     };
     const setQ = (p) => { q = { ...q, ...p }; ctx.setQuery(q); load(); };
     $('#ca-ack', el).addEventListener('change', (e) => setQ({ ack: e.target.value }));
+    el.addEventListener('click', (e) => { const b = e.target.closest('[data-ctype]'); if (b) setQ({ type: b.dataset.ctype }); });
     $('#ca-exam', el).addEventListener('change', (e) => setQ({ exam: e.target.value }));
     $('#ca-search', el).addEventListener('input', debounce((e) => setQ({ search: e.target.value.trim() }), 300));
     await load();

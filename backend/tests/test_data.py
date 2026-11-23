@@ -28,9 +28,9 @@ REAL_ITEM = {
 # --------------------------------------------------------------------------- normalization
 
 def test_normalize_flattens_documented_shape():
-    a = alarms.normalize(REAL_ITEM, {5: "Mobile Phone"})
+    a = alarms.normalize(REAL_ITEM, {5: "Some other name"})      # code 5 is in the feature list: its name wins
     assert (a["alarmId"], a["cameraId"], a["alarmTypeName"], a["priority"], a["lastActionLabel"]) == \
-        ("ALM-1", "123", "Mobile Phone", "critical", "Pending")
+        ("ALM-1", "123", "Vehicle Detection", "critical", "Pending")
     assert a["imageUrls"] == ["https://img/1", "https://img/2"]
 
 
@@ -49,8 +49,10 @@ def test_type_and_camera_names_come_from_camview_when_not_in_dictionary():
     # a code in the CamviewAI feature list: the official name, whatever Camview sends
     f = alarms.normalize({"alarm": {"alarmId": "F", "alarmType": 14, "alarmTypeName": "SOMETHING_ELSE"}})
     assert f["alarmTypeName"] == "Mobile Detection" and f["alarmTypeShort"] == "MD"
-    b = alarms.normalize({"alarm": {"alarmId": "B", "alarmType": 1, "alarmName": "Mobile Detection"}}, {1: "Mobile Phone"})
-    assert b["alarmTypeName"] == "Mobile Phone"                     # the admin dictionary wins
+    b = alarms.normalize({"alarm": {"alarmId": "B", "alarmType": 7, "alarmName": "Something"}}, {7: "Gate Opened"})
+    assert b["alarmTypeName"] == "Gate Opened"                      # a code outside the list: the admin dictionary
+    c = alarms.normalize({"alarm": {"alarmId": "C", "alarmType": 1}}, {1: "Mobile Phone"})
+    assert c["alarmTypeName"] == "Crowd Detection"                  # a listed code: never renamed by the dictionary
 
 
 def test_mock_ids_are_deterministic():

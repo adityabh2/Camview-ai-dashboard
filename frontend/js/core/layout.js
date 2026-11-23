@@ -13,6 +13,7 @@ export const NAV_INTERNAL = [
   { href: '#/dashboard', label: 'Dashboard', icon: 'grid', route: '/dashboard', main: true },
   { href: '#/alerts', label: 'Alerts', icon: 'alert', route: '/alerts', main: true },
   { href: '#/monitoring', label: 'Monitoring', icon: 'camera', route: '/monitoring', main: true },
+  { href: '#/hms', label: 'HMS', icon: 'zap', route: '/hms', main: true },
   { href: '#/tickets', label: 'Tickets', icon: 'report', route: '/tickets', main: true },
   { href: '#/incidents', label: 'Incidents', icon: 'layers', route: '/incidents', main: true, flag: 'ENABLE_INCIDENTS' },
   { href: '#/map', label: 'Map', icon: 'map', route: '/map', main: true, flag: 'ENABLE_MAP' },

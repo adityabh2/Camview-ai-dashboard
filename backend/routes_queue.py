@@ -53,7 +53,7 @@ def _tz():
         return timezone.utc
 
 
-def _all_alarms(user, project=None, code=None):
+def _all_alarms(user, project=None, code=None, archived=False):
     """Merged, scope-filtered working sets of every project the user may see — or only the projects behind one
     registered project code (`code`, e.g. RAILTEL-J&K/JKSSB-AAE-FOC/151126/CCTV-AI/IIL)."""
     if code:
@@ -72,6 +72,16 @@ def _all_alarms(user, project=None, code=None):
         got, feed = datasource.working_set(user, pid)
         items.extend(got)
         freshness[pid] = datasource.freshness(feed)
+    # archived alerts leave every list, count, map and board (a deleted one never comes back); the Archived view
+    # (archived=True) shows only the archived ones
+    import archive
+    if archived:
+        keep = archive.archived_ids()
+        items = [a for a in items if a["alarmId"] in keep]
+    else:
+        hidden = archive.hidden_ids()
+        if hidden:
+            items = [a for a in items if a["alarmId"] not in hidden]
     return items, freshness
 
 
@@ -147,6 +157,36 @@ def _in_view(a, view):
     raise ApiError("bad_request", f"view must be one of {', '.join(VIEWS)}.", 400)
 
 
+def _type_counts(items):
+    """[{type, short, name, count, live}] most frequent first — alerts per classification (CamviewAI feature list)."""
+    out = {}
+    for a in items:
+        if (a.get("eventKind") or "alert") != "alert" or a.get("alarmType") is None:
+            continue
+        t = out.setdefault(a["alarmType"], {"type": a["alarmType"], "short": a.get("alarmTypeShort") or "?",
+                                            "name": a.get("alarmTypeName") or "", "count": 0, "live": 0})
+        t["count"] += 1
+        t["live"] += bool(a.get("live"))
+    return sorted(out.values(), key=lambda t: -t["count"])
+
+
+def _view_counts(items):
+    """All operational view counts in one pass (the client readiness check runs once per alert, not twice)."""
+    out = {v: 0 for v in VIEWS}
+    for a in items:
+        if a["decision"] == "pending" and (a.get("eventKind") or "alert") == "alert":
+            out["needs_review"] += 1
+        if (a.get("flags") or {}).get("unacknowledged"):
+            out["unacknowledged"] += 1
+        state = alert_service.readiness(a)["state"]
+        out["client_eligible"] += state == "ready"
+        out["client_shared"] += state == "visible"
+        cond = set((a.get("health") or {}).get("conditions") or [])
+        out["camera_issues"] += bool(cond & {"CAMERA_OFFLINE", "FRAME_SYNC_FAILED", "STREAM_UNAVAILABLE"})
+        out["recording_issues"] += "RECORDING_NOT_DETECTED" in cond
+    return out
+
+
 def _counts(items):
     c = {"all": len(items), "pending": 0, "valid": 0, "invalid": 0, "exception": 0, "unacknowledged": 0}
     for a in items:
@@ -159,7 +199,8 @@ def _counts(items):
 @rbac.internal("live.view", "alarm.view", any_of=True)
 def queue():
     user = _user()
-    items, freshness = _all_alarms(user, request.args.get("projectId"), request.args.get("code"))
+    items, freshness = _all_alarms(user, request.args.get("projectId"), request.args.get("code"),
+                                   archived=request.args.get("archived") == "1")
     f = {k: request.args.get(k) for k in ("status", "client", "exam", "priority", "centre", "camera", "search", "from", "to",
                                           "kind", "type", "city", "by", "view")}
     f["status"] = f["status"] or "pending"
@@ -167,7 +208,7 @@ def queue():
     if f.get("view") and f["view"] not in VIEWS:
         raise ApiError("bad_request", f"view must be one of {', '.join(VIEWS)}.", 400)
     both = _filter(items, {**f, "status": "all", "kind": "all", "by": None, "view": None})
-    views = {v: sum(1 for a in both if _in_view(a, v)) for v in VIEWS}
+    views = _view_counts(both)
     if f.get("view"):
         both = [a for a in both if _in_view(a, f["view"])]
     base = [a for a in both if f["kind"] == "all" or (a.get("eventKind") or "alert") == f["kind"]]
@@ -190,6 +231,8 @@ def queue():
         "cameras": sorted({a.get("cameraCode") for a in items if a.get("cameraCode")})[:500],
         "types": sorted({(str(a.get("alarmType")), a.get("alarmTypeName") or "") for a in items if a.get("alarmType") is not None},
                         key=lambda x: x[1]),
+        # alerts per classification under the current filters (all but the type itself) — the type chips' counts
+        "typeCounts": _type_counts(_filter(items, {**f, "type": None})),
         "projects": [[p["externalId"], p["code"] + (f" · {p['name']}" if p.get("name") and p["name"] != p["code"] else "")]
                      for p in (project_label(x) for x in (datasource.allowed_projects(user)))],
     }

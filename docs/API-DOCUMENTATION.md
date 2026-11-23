@@ -188,7 +188,8 @@ client portal. There is no critical / high / medium ranking.
 
 * A code **not** in this list is shown as **"Unknown alert code N"** and recorded in Data quality
   (`unknown_alert_code`). It is never shown under a guessed name.
-* An administrator can rename a type in Nomenclature › Dictionary; that name then wins.
+* The feature list is authoritative: no Dictionary entry, setting (`CAMVIEW_ALARM_TYPE_NAMES`) or administrator
+  can rename a listed code. The Dictionary names only codes outside the list.
 * Code 10 also carries camera online / offline events. Those are camera status events, never sent to clients.
 
 ### 2.2 Live or earlier
@@ -249,6 +250,20 @@ Errors: `{"error": "<code>", "message": "<text>", "requestId": "…"}`.
 
 Each alert carries `alarmType`, `alarmTypeName`, `alarmTypeShort`, `alarmTypeKnown`, `live`, `lastAgeMinutes`,
 `firstInstance`, `lastInstance`, `decision`, `evidence`, `exam`, `client`, `ticket`.
+
+### 3.2a HMS board and archive
+
+| Method & path | Purpose |
+|---|---|
+| `GET /api/hms?code=<code>&tzOffset=330` | Per alert type: `live`, `today`, `total`, `pending`, `latestAt`; totals; cameras online / offline. |
+| `GET /api/queue?...&archived=1` | The Archived view of the alert list. |
+| `GET /api/queue` → `facets.typeCounts` | Alerts per type under the current filters (the type chips). |
+| `GET /api/archive` | Archived alerts and codes; `canDelete` is true for administrators. |
+| `POST /api/archive/alerts` `{alarmIds}` or `{code}` | Archive alerts (kept, hidden everywhere). |
+| `POST /api/archive/alerts/restore` `{alarmIds}` | Restore archived alerts. |
+| `POST /api/archive/alerts/delete` `{alarmIds}` | Administrator only, archived alerts only: delete for good. |
+| `POST /api/project-codes/archive` / `restore` / `delete` `{code}` | Archive a code (monitoring stops, data kept), restore it, or delete it (administrator, archived only). |
+| `GET /api/map?code=<code>` | Map of one project's centres; without `code` every project (coloured per project). |
 
 ### 3.3 Project codes
 

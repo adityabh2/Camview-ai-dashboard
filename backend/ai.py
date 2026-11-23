@@ -412,7 +412,7 @@ def tool_list_centres(user, args, tz):
         t["today"] += _local_day(a.get("lastInstance"), tz) == today
         if a["decision"] == "pending":
             t["pending"] += 1
-            t["urgentPending"] += a.get("priority") in ("critical", "high")
+            t["urgentPending"] += bool(a.get("live"))
         t["cameras"].add(str(a.get("cameraId")))
         h = a.get("health") or {}
         if h.get("available") and h["camera"]["state"] == "offline":

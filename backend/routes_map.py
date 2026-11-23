@@ -33,7 +33,8 @@ def map_points():
     rng = request.args.get("range") or "window"
     if rng not in RANGES:
         raise ApiError("bad_request", "range must be today, 24h or window.", 400)
-    items, freshness = _all_alarms(user)
+    # one project code (or one project) shows only its centres; none = every project, coloured per project
+    items, freshness = _all_alarms(user, request.args.get("projectId"), request.args.get("code"))
     known = geo.places()
     labels = {}
 

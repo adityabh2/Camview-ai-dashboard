@@ -85,8 +85,9 @@ from routes_incidents import bp as incidents_bp  # noqa: E402  (V2: incidents)
 from routes_map import bp as map_bp          # noqa: E402  (V2: operations map)
 from routes_ai import bp as ai_bp            # noqa: E402  (V2: AI assistant + smart search)
 from routes_branding import bp as branding_bp  # noqa: E402  (organisation name + logo)
+from routes_hms import bp as hms_bp          # noqa: E402  (HMS board: alerts per classification, live)
 
-for blueprint in (common_bp, ops_bp, queue_bp, sharing_bp, admin_bp, client_bp, incidents_bp, map_bp, ai_bp, branding_bp):
+for blueprint in (common_bp, ops_bp, queue_bp, sharing_bp, admin_bp, client_bp, incidents_bp, map_bp, ai_bp, branding_bp, hms_bp):
     app.register_blueprint(blueprint)
 
 CSP = ("default-src 'self'; "

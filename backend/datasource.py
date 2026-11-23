@@ -425,6 +425,22 @@ def start_warmer():
     _warmer["thread"].start()
     log.info("Live refresh running in the background every %ss", config.CACHE_SECONDS)
 
+    def enrich_loop():
+        """Rebuilds a project's enriched working set as soon as its data changed (a Camview refresh, a decision, a
+        delivery), so screens find it ready instead of waiting ~1 s per project — switching to "All projects" or
+        another project stays fast. Recomputes only what changed (enriched() is keyed on the data and version)."""
+        while True:
+            try:
+                for pid in all_project_ids():
+                    f = _feeds.get(pid)
+                    if f is not None and f.items:
+                        enriched(f)
+            except Exception:
+                log.exception("background enrichment")
+            time.sleep(1.5)
+
+    threading.Thread(target=enrich_loop, name="camview-enrich-warmer", daemon=True).start()
+
 
 def refresh(project_id, force=False):
     """Returns the Feed, refreshing it if the cache expired. Never raises for

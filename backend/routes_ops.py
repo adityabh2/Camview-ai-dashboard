@@ -1184,7 +1184,7 @@ def watch_remove():
 # Monitor: centre alarm-status board (simple home screen)
 # ---------------------------------------------------------------------------
 
-HEALTH_RULE = ("ALARM = at least one critical or high alarm waiting for review · "
+HEALTH_RULE = ("ALARM = a live alert (last 30 min) waiting for review · "
                "WARNING = other alarms waiting for review · OK = nothing waiting for review. "
                "This reflects alarm status only — not camera or network health.")
 
@@ -1253,7 +1253,7 @@ def health_board():
         t["typeTop"] = Counter(a.get("alarmTypeName") for a in alerts_only).most_common(2)
         t["alarms"] = alerts_only
         todo = [a for a in t["alarms"] if a["flags"]["pending"]]
-        urgent = [a for a in todo if a.get("priority") in ("critical", "high")]
+        urgent = [a for a in todo if a.get("live")]          # a live alert waiting for review (no priority guess)
         state = "alarm" if urgent else "warning" if todo else "ok"
         latest = max(t["alarms"], key=lambda a: a.get("lastInstance") or "", default=None)
         out.append({"key": key, "code": t["code"], "name": t["name"], "nodeId": t["nodeId"], "tc": t["tc"],
